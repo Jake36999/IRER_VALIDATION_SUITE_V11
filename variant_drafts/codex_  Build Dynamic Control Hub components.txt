@@ -1,0 +1,4604 @@
+﻿Tab 1
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**more context
+
+
+Here is the "Phase 4: Dynamic Control Hub" report.
+
+
+---
+
+
+## **Phase 4: Dynamic Control Hub (Build Plan)**
+
+
+**Project:** V11.0 "HPC-SDG" Suite
+**Mandate:** This report details the build plan for the web-based control plane, which replaces the manual CLI-driven process.
+**Pivot Citation:** Per our combined review, the "Celery/Dask" orchestration concept is officially decommissioned as non-viable. The following "Web-Based Control Plane" is the approved architecture.
+
+
+---
+
+
+## **Section 1: The Meta-Orchestrator (app.py)**
+
+
+This component, `app.py`, is the new, persistent center of the entire suite. It replaces the previous, manual `!python run.py hunt` execution model.
+
+
+* **Technology:** A lightweight Flask server.
+* **Role 1: Signaler (Meta-Orchestrator)**
+    * This server will provide the primary API for managing the simulation suite.
+    * It will expose key endpoints for the web-based hub, including:
+        * `POST /api/start-hunt`: Triggers the execution of a new simulation hunt (see Section 2).
+        * `GET /api/get-status`: Provides the current state of the simulation and analysis (see Section 3).
+        * `GET /`: Serves the `index.html` control hub.
+* **Role 2: Watcher (Layer 2 Orchestrator)**
+    * Upon startup, `app.py` will launch a simple, non-blocking background thread (using Python's `threading` library).
+    * This "Watcher" thread will continuously monitor the `provenance_reports` directory for new `provenance.json` files.
+    * When a new file is detected, the Watcher will automatically spawn a subprocess to trigger the "Layer 2" analysis pipeline (e.g., TDA, BSSN-check, plotting scripts).
+    * Upon completion of this analysis, the Watcher will update a central `status.json` file with key results, metrics, and new plot filepaths.
+
+
+---
+
+
+## **Section 2: The Core Engine (Refactor)**
+
+
+This section details the refactor of the existing `adaptive_hunt_orchestrator.py` from a standalone script into a callable Python module.
+
+
+* **Conversion to Module:** The file will be refactored to be importable (e.g., `import core_engine`).
+* **Callable Function:** The `main()` function and argument parsing logic will be refactored into a single, callable function:
+    * `def execute_hunt(num_generations: int, population_size: int):`
+* **Logging:** All `print()` statements will be removed and replaced with Python's `logging` module. All logs will be directed to a dedicated `aste_hunt.log` file for persistent, machine-readable records.
+* **The New Call Chain:**
+    1.  The Flask server (`app.py`) receives a request at the `/api/start-hunt` endpoint.
+    2.  The endpoint function imports the refactored module (`from core_engine import execute_hunt`).
+    3.  It spawns a **new background thread** and calls `execute_hunt()` within it, passing the parameters from the API request.
+    4.  This architecture explicitly prevents the "Core Engine" (the hot, JAX-based Layer 1) from blocking or freezing the web server.
+
+
+---
+
+
+## **Section 3: The Interactive Hub (HTML)**
+
+
+The `app.py` server will serve a single `index.html` file, which will act as the unified control and visualization hub. This design achieves the "hot/cold" decoupling goal.
+
+
+* **Layer 1 Control (The "Hot" Layer):**
+    * The HTML file will feature a "Start Hunt" button within a simple form (to specify generations, population, etc.).
+    * Clicking this button will send a `POST` request to the `/api/start-hunt` endpoint on the `app.py` server.
+    * This is the *only* interaction the hub has with the "hot" JAX core. The hub *triggers* the hunt but does not "talk" to it directly.
+* **Layer 2 Visualization (The "Cold" Layer):**
+    * The HTML file will feature a "Live Status" dashboard.
+    * This dashboard will use JavaScript to periodically (e.g., every 5 seconds) send a `GET` request to the `/api/get-status` endpoint.
+    * This endpoint will simply read and return the `status.json` file that the "Watcher" thread (Section 1) maintains.
+    * The dashboard will then parse this JSON to update statistics (e.g., "Best SSE so far"), display plots, and report the current status, achieving live visualization without any performance-intensive coupling to the simulation itself.
+
+
+---
+
+
+## **Section 4: The Scalability Path (Colab to Cloud VM)**
+
+
+This architecture is designed for a seamless transition from a local "lab" environment to a distributed, high-performance cloud deployment.
+
+
+* **Phase A: Colab (Lab Environment)**
+    * You run `!python app.py`.
+    * This single command initiates one Python process.
+    * This process runs:
+        1.  The Flask web server.
+        2.  The "Watcher" background thread.
+        3.  The "Core Engine" (`execute_hunt`) in a third thread.
+    * This creates a fully-contained, testable, end-to-end environment for development and debugging.
+* **Phase B: Cloud VM (Distributed Production)**
+    * The architecture is distributed, not changed.
+    * **Control VM:** A lightweight, public-facing VM (e.g., a 2-core cloud instance) runs the `app.py` process. This VM hosts the web hub and API.
+    * **HPC/JAX VMs:** One or more dedicated, high-power JAX VMs are provisioned for the computation.
+    * **Refactor:** The `execute_hunt()` function on the "Control VM" is modified. Instead of importing and running `worker_sncgl_sdg.py` locally, it now uses `ssh` (or a cloud-native API) to remotely execute that worker script on the dedicated JAX VMs, passing the necessary parameters.
+    * This maintains the decoupled architecture while scaling compute power horizontally. The Control Hub remains the lightweight, central "brain" of the operation.
+
+
+**more context
+
+
+brief examples of responses'
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**and 
+
+
+This is a fantastic step\! Let's build the complete, runnable code for the **Dynamic Control Hub**.
+
+
+This solution is broken into three files that work together:
+
+
+1.  `app.py`: The Python **Flask server** that acts as the backend. It starts the hunt, watches for files, and serves status updates.
+2.  `index.html`: The HTML/JavaScript **frontend** you'll view in your browser. It provides the "Start Hunt" button and the live-updating dashboard.
+3.  `create_mock_artifacts.py`: A **placeholder script** that *simulates* a simulation run. It creates the a `...quantule_events.csv` and a `provenance_...json` file with a delay, allowing us to test the hub's watcher logic without running a real, multi-hour simulation.
+
+
+Here is the complete code and the instructions to run it.
+
+
+-----
+
+
+### 1\. `app.py` (The Flask Backend)
+
+
+This is the main control hub server. It's responsible for starting the simulation (in a separate thread) and providing a `/status` endpoint that the frontend can check for live updates.
+
+
+```python
+## app.py
+#
+# The backend for the Phase 4: Dynamic Control Hub.
+# This server launches simulation hunts and watches for the resulting artifacts.
+#
+# Dependencies:
+# pip install Flask
+#
+import os
+import subprocess
+import threading
+import time
+import glob
+import json
+from flask import Flask, render_template, jsonify, request
+
+
+# --- Shared Global State ---
+# We use global variables and a lock to safely share status
+# between the web request threads and the background hunter thread.
+#
+# DO NOT access these directly without acquiring the `state_lock`!
+state_lock = threading.Lock()
+hunt_status = "Idle" # "Idle", "Running", "Complete", "Error"
+hunt_process = None # Will hold the subprocess.Popen object
+found_files = []      # List of artifacts we've found
+final_result = {}       # The parsed content of the final provenance.json
+# ---------------------------
+
+
+app = Flask(__name__)
+
+
+def execute_hunt_thread():
+    """
+    This function runs in a separate thread.
+    It executes the simulation orchestrator and sets the final status.
+    """
+    global hunt_status, hunt_process, found_files, final_result
+    
+    # 1. --- Set status to "Running" ---
+    with state_lock:
+        hunt_status = "Running"
+        found_files = []
+        final_result = {}
+
+
+    print("[Hub] Starting new hunt...")
+
+
+    # 2. --- Launch the subprocess ---
+    #
+    # IMPORTANT: For this test, we are calling our MOCK script.
+    # To run your REAL simulation, change this command to:
+    # ['python3', 'adaptive_hunt_orchestrator.py']
+    #
+    try:
+        # We use the placeholder to test the hub
+        cmd = ['python3', 'create_mock_artifacts.py'] 
+        
+        # In a real scenario, you'd call the orchestrator:
+        # cmd = ['python3', 'adaptive_hunt_orchestrator.py'] 
+
+
+        # Popen is non-blocking
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with state_lock:
+            hunt_process = process
+
+
+        # 3. --- Wait for the process to complete ---
+        # We get the output/error to report if something goes wrong
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+
+
+        with state_lock:
+            if return_code != 0:
+                print(f"[Hub] Hunt process failed with code {return_code}.")
+                print(f"[Hub] STDERR: {stderr}")
+                hunt_status = "Error"
+                final_result = {"error": "Hunt process failed.", "details": stderr}
+            else:
+                print("[Hub] Hunt process completed successfully.")
+                # The watcher thread will set the status to "Complete"
+                # when it finds the provenance.json file.
+                # If the process finishes but no file is found,
+                # the watcher will eventually time out (or we can add a timeout).
+                pass
+
+
+    except Exception as e:
+        with state_lock:
+            print(f"[Hub] Exception during hunt execution: {e}")
+            hunt_status = "Error"
+            final_result = {"error": str(e)}
+    finally:
+        with state_lock:
+            hunt_process = None
+
+
+def watch_for_artifacts_thread():
+    """
+    This function runs in a separate, continuous background thread.
+    It scans the directory for our target artifacts and updates the global state.
+    """
+    global hunt_status, found_files, final_result
+    print("[Watcher] Watcher thread started.")
+    
+    while True:
+        try:
+            # We only watch if a hunt is "Running"
+            with state_lock:
+                current_status = hunt_status
+            
+            if current_status == "Running":
+                # --- Check for Profiler Artifact ---
+                profiler_files = glob.glob("*_quantule_events.csv")
+                
+                # --- Check for Final Provenance Artifact ---
+                provenance_files = glob.glob("provenance_*.json")
+
+
+                with state_lock:
+                    # Add any new files to our list
+                    all_artifacts = set(profiler_files + provenance_files)
+                    for f in all_artifacts:
+                        if f not in found_files:
+                            print(f"[Watcher] Found new artifact: {f}")
+                            found_files.append(f)
+                    
+                    # --- If we find the final report, the hunt is Complete ---
+                    if provenance_files:
+                        print(f"[Watcher] Found provenance file: {provenance_files[0]}")
+                        try:
+                            # Read the file
+                            with open(provenance_files[0], 'r') as f:
+                                data = json.load(f)
+                            
+                            # Update global state
+                            hunt_status = "Complete"
+                            final_result = data
+                            print(f"[Watcher] Hunt marked as Complete.")
+                        
+                        except Exception as e:
+                            print(f"[Watcher] Error parsing JSON from {provenance_files[0]}: {e}")
+                            hunt_status = "Error"
+                            final_result = {"error": f"Failed to parse {provenance_files[0]}"}
+            
+            # Sleep for a few seconds before checking again
+            time.sleep(2)
+            
+        except Exception as e:
+            # Don't let the watcher thread die
+            print(f"[Watcher] Error in watcher loop: {e}")
+            time.sleep(5)
+
+
+
+
+# --- Flask HTTP Routes ---
+
+
+@app.route('/')
+def index():
+    """Serves the main HTML dashboard."""
+    # The 'index.html' file must be in a folder named 'templates'
+    # in the same directory as this app.py file.
+    return render_template('index.html')
+
+
+@app.route('/start_hunt', methods=['POST'])
+def start_hunt():
+    """
+    API endpoint to start a new hunt.
+    It's triggered by the "Start New Hunt" button.
+    """
+    global hunt_status
+    
+    with state_lock:
+        if hunt_status == "Running":
+            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
+        
+        # Start the hunt in a new thread
+        hunt_thread = threading.Thread(target=execute_hunt_thread, daemon=True)
+        hunt_thread.start()
+        
+    return jsonify({"status": "success", "message": "Hunt started."})
+
+
+@app.route('/status')
+def get_status():
+    """
+    API endpoint for the frontend to poll.
+    Returns the current shared state as JSON.
+    """
+    with state_lock:
+        # Return a copy of the state
+        status_data = {
+            "hunt_status": hunt_status,
+            "found_files": list(found_files),
+            "final_result": final_result
+        }
+    return jsonify(status_data)
+
+
+# --- Main Entry Point ---
+
+
+if __name__ == '__main__':
+    # Start the background watcher thread
+    watcher = threading.Thread(target=watch_for_artifacts_thread, daemon=True)
+    watcher.start()
+    
+    # Start the Flask web server
+    print("--- Dynamic Control Hub ---")
+    print("Starting Flask server at http://127.0.0.1:5000")
+    print("Open this URL in your browser.")
+    app.run(debug=True, port=5000)
+```
+
+
+-----
+
+
+### 2\. `templates/index.html` (The Frontend)
+
+
+You must create a new folder named `templates` in the same directory as `app.py`. Save this file *inside* that `templates` folder.
+
+
+```html
+@DOCTYPE html
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Control Hub</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #c0c0c0; cursor: not-allowed; }
+        #status-box { margin-top: 20px; padding: 15px; border-radius: 5px; }
+        .status-idle { background: #e9e9e9; }
+        .status-running { background: #e0f0ff; border: 1px solid #b3d7ff; }
+        .status-complete { background: #dfffe3; border: 1px solid #b3ffc1; }
+        .status-error { background: #ffeded; border: 1px solid #ffb3b3; }
+        #hunt-status { font-size: 24px; font-weight: bold; }
+        pre { background-color: #2b2b2b; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        ul { list-style-type: "📁 "; }
+    </style>
+</head>
+<body>
+
+
+    <div class="container">
+        <h1>Phase 4: Dynamic Control Hub</h1>
+        
+        <button id="start-hunt-btn" onclick="startHunt()">
+            Start New Hunt
+        </button>
+        
+        <hr style="margin: 25px 0;">
+
+
+        <h2>📊 Live Hunt Status</h2>
+        
+        <div id="status-box" class="status-idle">
+            <strong>Current Status:</strong>
+            <span id="hunt-status">Idle</span>
+        </div>
+
+
+        <h3>Found Artifacts</h3>
+        <ul id="artifact-list">
+            <li>(No artifacts found yet)</li>
+        </ul>
+
+
+        <h3>Final Result (from Provenance)</h3>
+        <pre id="final-result-json">
+{
+  "status": "Waiting for provenance.json..."
+}
+        </pre>
+    </div>
+
+
+    <script>
+        const startBtn = document.getElementById('start-hunt-btn');
+        const huntStatusEl = document.getElementById('hunt-status');
+        const statusBoxEl = document.getElementById('status-box');
+        const artifactListEl = document.getElementById('artifact-list');
+        const finalResultEl = document.getElementById('final-result-json');
+
+
+        /**
+         * Calls the backend to start a new hunt.
+         */
+        async function startHunt() {
+            startBtn.disabled = true;
+            startBtn.textContent = "Starting...";
+
+
+            try {
+                const response = await fetch('/start_hunt', { method: 'POST' });
+                const data = await response.json();
+
+
+                if (response.ok) {
+                    huntStatusEl.textContent = "Running";
+                    statusBoxEl.className = "status-running";
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    alert('Error: ' + data.message);
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+            } catch (error) {
+                alert('Failed to connect to server: ' + error);
+                startBtn.disabled = false;
+                startBtn.textContent = "Start New Hunt";
+            }
+        }
+
+
+        /**
+         * Polls the /status endpoint and updates the UI.
+         */
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) {
+                    console.error("Failed to fetch status.");
+                    return;
+                }
+                
+                const data = await response.json();
+
+
+                // 1. Update Status Badge
+                huntStatusEl.textContent = data.hunt_status;
+                statusBoxEl.className = `status-${data.hunt_status.toLowerCase()}`;
+
+
+                // 2. Update Artifacts List
+                if (data.found_files.length > 0) {
+                    artifactListEl.innerHTML = ''; // Clear list
+                    data.found_files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.textContent = file;
+                        artifactListEl.appendChild(li);
+                    });
+                } else {
+                    artifactListEl.innerHTML = '<li>(No artifacts found yet)</li>';
+                }
+
+
+                // 3. Update Final Result JSON
+                finalResultEl.textContent = JSON.stringify(data.final_result, null, 2);
+
+
+                // 4. Update Button State
+                if (data.hunt_status === "Running") {
+                    startBtn.disabled = true;
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+
+
+            } catch (error) {
+                console.error("Error during status update:", error);
+                huntStatusEl.textContent = "Connection Error";
+                statusBoxEl.className = "status-error";
+            }
+        }
+
+
+        // --- Start the polling interval ---
+        // Poll every 2 seconds (2000 milliseconds)
+        setInterval(updateStatus, 2000);
+        
+        // Also run once on page load
+        updateStatus();
+    </script>
+
+
+</body>
+</html>
+```
+
+
+-----
+
+
+### 3\. `create_mock_artifacts.py` (The Placeholder)
+
+
+Save this file in the **same directory** as `app.py`. This script simulates the work of your `adaptive_hunt_orchestrator.py` and `validation_pipeline.py` by creating the files the hub is looking for.
+
+
+```python
+## create_mock_artifacts.py
+#
+# This is a placeholder script to TEST the control hub.
+# It simulates a long-running simulation by:
+# 1. Waiting for 5 seconds.
+# 2. Creating a mock profiler CSV.
+# 3. Waiting for 5 more seconds.
+# 4. Creating the final "provenance.json" report.
+#
+import time
+import json
+import random
+import os
+
+
+# Clean up old files before we start
+print("[Mock] Cleaning up old artifacts...")
+for f in glob.glob("*_quantule_events.csv"):
+    os.remove(f)
+for f in glob.glob("provenance_*.json"):
+    os.remove(f)
+
+
+# --- 1. Simulate first part of the simulation ---
+print("[Mock] Simulation running... (Step 1/2)")
+time.sleep(5)
+
+
+# --- 2. Create the Quantule Profiler artifact ---
+run_id = f"mock_run_{random.randint(1000, 9999)}"
+profiler_filename = f"{run_id}_quantule_events.csv"
+print(f"[Mock] Creating artifact: {profiler_filename}")
+with open(profiler_filename, "w") as f:
+    f.write("event_type,timestamp,metric_value\n")
+    f.write("INIT,0.001,0\n")
+    f.write("QUANTULE_FLIP,5.123,8.45\n")
+    f.write("QUANTULE_FLIP,7.456,9.12\n")
+
+
+# --- 3. Simulate validation pipeline ---
+print("[Mock] Simulation running... (Step 2/2)")
+time.sleep(5)
+
+
+# --- 4. Create the final Provenance artifact ---
+provenance_filename = f"provenance_{run_id}.json"
+print(f"[Mock] Creating final artifact: {provenance_filename}")
+
+
+mock_results = {
+    "run_id": run_id,
+    "timestamp": time.time(),
+    "parameters": {
+        "param_D": 0.8,
+        "param_eta": 1.2,
+        "param_a_coupling": 0.5
+    },
+    "validation_status": "PASS: SSE-LOCK",
+    "metrics": {
+        "Calculated SSE": 0.087123,
+        "Phase Coherence Score (PCS)": 0.9981,
+        "Principled Localization Index (PLI)": 1.002,
+        "Informational Compressibility (IC)": 0.0015
+    }
+}
+
+
+with open(provenance_filename, "w") as f:
+    json.dump(mock_results, f, indent=2)
+
+
+print("[Mock] Hunt simulation complete.")
+```
+
+
+-----
+
+
+### 🚀 How to Run the Test
+
+
+Your directory structure should look like this:
+
+
+```
+/your_project_directory/
+    ├── app.py
+    ├── create_mock_artifacts.py
+    └── /templates/
+        └── index.html
+```
+
+
+**Instructions:**
+
+
+1.  **Install Flask:**
+
+
+    ```bash
+    pip install Flask
+    ```
+
+
+2.  **Run the Hub Server:**
+    Open your terminal, navigate to `/your_project_directory/`, and run:
+
+
+    ```bash
+    python3 app.py
+    ```
+
+
+3.  **Open the Hub:**
+    You will see output like this:
+
+
+    ```
+    [Watcher] Watcher thread started.
+    --- Dynamic Control Hub ---
+    Starting Flask server at http://127.0.0.1:5000
+    Open this URL in your browser.
+    ```
+
+
+    Open **`http://127.0.0.1:5000`** in your web browser.
+
+
+4.  **Test the Hub:**
+
+
+      * Click the **"Start New Hunt"** button.
+      * The button will disable, and the status will change to **"Running"**.
+      * In your terminal running `app.py`, you'll see the log output from `create_mock_artifacts.py`.
+      * Watch the "Found Artifacts" list in your browser. After 5 seconds, you'll see the `.csv` file appear.
+      * After 5 more seconds, the `provenance_....json` file will appear.
+      * The status will change to **"Complete"**, the "Final Result" box will fill with the JSON data, and the "Start New Hunt" button will re-enable.
+
+
+This gives you a fully functional, testable control hub. When you are ready to use your *real* simulation, you just need to edit `app.py` and change the `cmd` variable to point to `adaptive_hunt_orchestrator.py`\!
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Added Flask-based Dynamic Control Hub that launches hunts in background threads, watches for provenance and profiler artifacts, and exposes start/status APIs while persisting status snapshots.{line_range_start=1 line_range_end=215 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py#L1-L215"}
+* Built a responsive HTML dashboard for triggering hunts, polling status, and displaying detected artifacts and provenance results.{line_range_start=1 line_range_end=139 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html#L1-L139"}
+* Created a mock artifact generator to simulate pipeline runs by emitting quantule profiler CSVs and provenance JSON reports into the watched directory.{line_range_start=1 line_range_end=80 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py#L1-L80"}
+Testing
+* ✅ python -m py_compile app.py create_mock_artifacts.py 
+Files (3)
+* advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py
+* New
+* * advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py
+* New
+* * advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html
+* New
+* diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..5b8abca2c04e4abdb93162b2c3536c45027b6324
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py        
+@@ -0,0 +1,215 @@
++"""
++Flask-based Dynamic Control Hub prototype for Phase 4.
++
++This server starts hunts in a background thread, watches for core
++artifacts (provenance_*.json and *_quantule_events.csv), and exposes a
++simple status API plus a static dashboard.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import logging
++import subprocess
++import threading
++import time
++from pathlib import Path
++from typing import Dict, List, Optional
++
++from flask import Flask, jsonify, render_template, request
++
++ARTIFACT_DIR = Path("provenance_reports")
++STATUS_FILE = Path("status.json")
++DEFAULT_HUNT_SCRIPT = Path("create_mock_artifacts.py")
++
++logging.basicConfig(
++    level=logging.INFO,
++    format="%(asctime)s [%(levelname)s] %(message)s",
++    handlers=[logging.StreamHandler(), logging.FileHandler("control_hub.log")],
++)
++
++state_lock = threading.Lock()
++state: Dict[str, object] = {
++    "hunt_status": "idle",
++    "found_files": [],
++    "final_result": {},
++    "last_error": None,
++}
++
++app = Flask(__name__)
++
++
++def write_status_file() -> None:
++    """Persist the latest state to ``STATUS_FILE`` for offline reading."""
++    snapshot = {}
++    with state_lock:
++        snapshot.update(state)
++    STATUS_FILE.write_text(json.dumps(snapshot, indent=2))
++    logging.debug("Status written to %s", STATUS_FILE)
++
++
++def reset_state() -> None:
++    """Reset in-memory state for a new hunt."""
++    with state_lock:
++        state["hunt_status"] = "running"
++        state["found_files"] = []
++        state["final_result"] = {}
++        state["last_error"] = None
++    write_status_file()
++
++
++def execute_hunt(num_generations: Optional[int], population_size: Optional[int]) -> None:
++    """Invoke the hunt orchestration script in a background thread.
++
++    This stub calls ``create_mock_artifacts.py`` to simulate work. Replace
++    ``DEFAULT_HUNT_SCRIPT`` with ``adaptive_hunt_orchestrator.py`` (or similar)
++    when integrating the real pipeline.
++    """
++
++    command: List[str] = ["python", str(DEFAULT_HUNT_SCRIPT), "--output-dir", str(ARTIFACT_DIR)]
++    if num_generations is not None:
++        command.extend(["--generations", str(num_generations)])
++    if population_size is not None:
++        command.extend(["--population", str(population_size)])
++
++    logging.info("Starting hunt via command: %s", " ".join(command))
++    try:
++        result = subprocess.run(command, capture_output=True, text=True, check=True)
++        if result.stdout:
++            logging.info(result.stdout.strip())
++        if result.stderr:
++            logging.warning(result.stderr.strip())
++    except subprocess.CalledProcessError as exc:  # pragma: no cover - runtime safety
++        logging.error("Hunt process failed: %s", exc)
++        logging.error("stdout: %s", exc.stdout)
++        logging.error("stderr: %s", exc.stderr)
++        with state_lock:
++            state["hunt_status"] = "error"
++            state["last_error"] = exc.stderr or str(exc)
++        write_status_file()
++        return
++
++    logging.info("Hunt process exited cleanly.")
++
++
++def execute_hunt_thread(num_generations: Optional[int], population_size: Optional[int]) -> None:
++    reset_state()
++    execute_hunt(num_generations, population_size)
++
++
++@app.route("/")
++def index() -> str:
++    return render_template("index.html")
++
++
++@app.route("/api/start-hunt", methods=["POST"])
++def api_start_hunt():
++    with state_lock:
++        if state.get("hunt_status") == "running":
++            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
++
++    payload = request.get_json(silent=True) or {}
++    generations = payload.get("generations")
++    population = payload.get("population")
++
++    thread = threading.Thread(
++        target=execute_hunt_thread, args=(generations, population), daemon=True
++    )
++    thread.start()
++    logging.info("New hunt thread started with generations=%s population=%s", generations, population)
++    return jsonify({"status": "ok", "message": "Hunt started."})
++
++
++@app.route("/api/get-status")
++def api_get_status():
++    with state_lock:
++        payload = {
++            "hunt_status": state["hunt_status"],
++            "found_files": list(state["found_files"]),
++            "final_result": state["final_result"],
++            "last_error": state["last_error"],
++        }
++    return jsonify(payload)
++
++
++def watch_for_artifacts(stop_event: threading.Event) -> None:
++    logging.info("Watcher thread started; monitoring %s", ARTIFACT_DIR)
++    seen: set[str] = set()
++    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
++
++    while not stop_event.is_set():
++        try:
++            provenance_files = sorted(ARTIFACT_DIR.glob("provenance_*.json"))
++            profiler_files = sorted(ARTIFACT_DIR.glob("*_quantule_events.csv"))
++            discovered = provenance_files + profiler_files
++
++            new_files = [str(f) for f in discovered if str(f) not in seen]
++            if new_files:
++                with state_lock:
++                    state["found_files"] = sorted(set(state["found_files"]) | set(new_files))
++                seen.update(new_files)
++                write_status_file()
++                for file_path in new_files:
++                    logging.info("Watcher detected artifact: %s", file_path)
++
++            if provenance_files:
++                newest = provenance_files[-1]
++                try:
++                    data = json.loads(newest.read_text())
++                except json.JSONDecodeError as exc:  # pragma: no cover - defensive
++                    logging.error("Failed to parse %s: %s", newest, exc)
++                    with state_lock:
++                        state["hunt_status"] = "error"
++                        state["last_error"] = f"Malformed JSON in {newest.name}"
++                    write_status_file()
++                else:
++                    with state_lock:
++                        state["hunt_status"] = "complete"
++                        state["final_result"] = data
++                    write_status_file()
++                    logging.info("Provenance detected; hunt marked complete: %s", newest)
++            time.sleep(2)
++        except Exception as exc:  # pragma: no cover - defensive guard
++            logging.exception("Watcher loop error: %s", exc)
++            time.sleep(5)
++
++
++@app.cli.command("run-server")
++def run_server_command() -> None:
++    """CLI helper to start the Flask app with the watcher."""
++    run_with_watcher()
++
++
++def run_with_watcher() -> None:
++    stop_event = threading.Event()
++    watcher_thread = threading.Thread(target=watch_for_artifacts, args=(stop_event,), daemon=True)
++    watcher_thread.start()
++
++    logging.info("Starting Flask server at http://127.0.0.1:5000")
++    try:
++        app.run(debug=False, port=5000)
++    finally:
++        stop_event.set()
++        watcher_thread.join(timeout=2)
++        logging.info("Watcher stopped.")
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description="Dynamic Control Hub server")
++    parser.add_argument("--host", default="127.0.0.1")
++    parser.add_argument("--port", type=int, default=5000)
++    args = parser.parse_args()
++
++    stop_event_main = threading.Event()
++    watcher_thread_main = threading.Thread(
++        target=watch_for_artifacts, args=(stop_event_main,), daemon=True
++    )
++    watcher_thread_main.start()
++
++    logging.info("Starting Flask server at http://%s:%s", args.host, args.port)
++    try:
++        app.run(host=args.host, port=args.port)
++    finally:
++        stop_event_main.set()
++        watcher_thread_main.join(timeout=2)
++        logging.info("Watcher stopped.")
+diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..a00d92d4c24e109caa0e29c7d73ff9bc54454a26
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/create_mock_artifacts.py        
+@@ -0,0 +1,80 @@
++"""Mock artifact generator for exercising the Dynamic Control Hub.
++
++Simulates a run by writing a Quantule profiler CSV followed by a
++provenance JSON report to the configured output directory.
++"""
++from __future__ import annotations
++
++import argparse
++import glob
++import json
++import random
++import time
++from pathlib import Path
++
++
++def generate_profiler_csv(output_dir: Path, run_id: str) -> Path:
++    csv_path = output_dir / f"{run_id}_quantule_events.csv"
++    csv_path.write_text(
++        "\n".join(
++            [
++                "event_type,timestamp,metric_value",
++                "INIT,0.001,0",
++                "QUANTULE_FLIP,5.123,8.45",
++                "QUANTULE_FLIP,7.456,9.12",
++            ]
++        )
++    )
++    return csv_path
++
++
++def generate_provenance(output_dir: Path, run_id: str) -> Path:
++    provenance_path = output_dir / f"provenance_{run_id}.json"
++    provenance_payload = {
++        "run_id": run_id,
++        "timestamp": time.time(),
++        "parameters": {"param_D": 0.8, "param_eta": 1.2, "param_a_coupling": 0.5},
++        "validation_status": "PASS: SSE-LOCK",
++        "metrics": {
++            "Calculated SSE": 0.087123,
++            "Phase Coherence Score (PCS)": 0.9981,
++            "Principled Localization Index (PLI)": 1.002,
++            "Informational Compressibility (IC)": 0.0015,
++        },
++    }
++    provenance_path.write_text(json.dumps(provenance_payload, indent=2))
++    return provenance_path
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description="Create mock artifacts for watcher testing")
++    parser.add_argument("--output-dir", type=Path, default=Path("provenance_reports"))
++    parser.add_argument("--generations", type=int, default=2)
++    parser.add_argument("--population", type=int, default=32)
++    args = parser.parse_args()
++
++    args.output_dir.mkdir(parents=True, exist_ok=True)
++
++    for file_path in glob.glob(str(args.output_dir / "*_quantule_events.csv")):
++        Path(file_path).unlink()
++    for file_path in glob.glob(str(args.output_dir / "provenance_*.json")):
++        Path(file_path).unlink()
++
++    run_id = f"mock_run_{random.randint(1000, 9999)}"
++    print(f"[Mock] Simulating hunt run {run_id} (generations={args.generations}, population={args.population})")
++
++    print("[Mock] phase 1: generating profiler output...")
++    time.sleep(3)
++    profiler_path = generate_profiler_csv(args.output_dir, run_id)
++    print(f"[Mock] wrote {profiler_path}")
++
++    print("[Mock] phase 2: running validation pipeline...")
++    time.sleep(3)
++    provenance_path = generate_provenance(args.output_dir, run_id)
++    print(f"[Mock] wrote {provenance_path}")
++
++    print("[Mock] complete")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..b31e4c5d7dd1af87991ed11f18ce72e8f320e263
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html        
+@@ -0,0 +1,139 @@
++<!doctype html>
++<html lang="en">
++<head>
++  <meta charset="UTF-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1.0">
++  <title>Phase 4 Dynamic Control Hub</title>
++  <style>
++    body { font-family: "Segoe UI", system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
++    .panel { max-width: 920px; margin: 0 auto; background: #1e293b; border-radius: 12px; padding: 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.35); }
++    h1 { margin-top: 0; color: #38bdf8; }
++    .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
++    .controls label { display: flex; flex-direction: column; font-size: 14px; color: #cbd5e1; }
++    .controls input { margin-top: 4px; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0b162a; color: #e2e8f0; min-width: 120px; }
++    button { background: linear-gradient(135deg, #38bdf8, #22d3ee); border: none; color: #0b162a; padding: 12px 18px; border-radius: 10px; font-weight: 700; cursor: pointer; box-shadow: 0 10px 30px rgba(56,189,248,0.35); }
++    button:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }
++    .status { padding: 16px; border-radius: 10px; margin: 16px 0; background: #0b162a; border: 1px solid #334155; }
++    .status.running { border-color: #38bdf8; }
++    .status.complete { border-color: #22c55e; }
++    .status.error { border-color: #ef4444; }
++    .status-id { font-weight: 800; letter-spacing: 1px; }
++    ul { padding-left: 18px; }
++    pre { background: #0b162a; border-radius: 10px; padding: 12px; border: 1px solid #334155; overflow-x: auto; color: #a5b4fc; }
++    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
++    @media (max-width: 720px) { .row { grid-template-columns: 1fr; } }
++  </style>
++</head>
++<body>
++  <div class="panel">
++    <h1>Dynamic Control Hub</h1>
++    <p>This dashboard starts hunts and watches for provenance / profiler artifacts generated by the validation pipeline.</p>
++
++    <div class="controls">
++      <label>Generations
++        <input id="generations" type="number" min="1" placeholder="optional" />
++      </label>
++      <label>Population Size
++        <input id="population" type="number" min="1" placeholder="optional" />
++      </label>
++      <button id="startButton" onclick="startHunt()">Start New Hunt</button>
++    </div>
++
++    <div id="statusBox" class="status">
++      <div>Current Status: <span id="statusValue" class="status-id">IDLE</span></div>
++      <div id="errorMessage" style="color:#fca5a5; margin-top:8px;"></div>
++    </div>
++
++    <div class="row">
++      <div>
++        <h3>Artifacts Detected</h3>
++        <ul id="artifactList">
++          <li>No artifacts detected yet.</li>
++        </ul>
++      </div>
++      <div>
++        <h3>Final Result (provenance)</h3>
++        <pre id="finalResult">{"status": "waiting for provenance_*"}</pre>
++      </div>
++    </div>
++  </div>
++
++  <script>
++    const startButton = document.getElementById('startButton');
++    const statusValue = document.getElementById('statusValue');
++    const statusBox = document.getElementById('statusBox');
++    const artifactList = document.getElementById('artifactList');
++    const finalResult = document.getElementById('finalResult');
++    const errorMessage = document.getElementById('errorMessage');
++
++    async function startHunt() {
++      startButton.disabled = true;
++      startButton.textContent = 'Starting...';
++      errorMessage.textContent = '';
++
++      const payload = {
++        generations: parseInt(document.getElementById('generations').value) || undefined,
++        population: parseInt(document.getElementById('population').value) || undefined,
++      };
++
++      try {
++        const res = await fetch('/api/start-hunt', {
++          method: 'POST',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify(payload),
++        });
++        const data = await res.json();
++        if (!res.ok) {
++          throw new Error(data.message || 'Failed to start hunt');
++        }
++        statusValue.textContent = 'RUNNING';
++        statusBox.className = 'status running';
++        startButton.textContent = 'Hunt Running...';
++      } catch (error) {
++        errorMessage.textContent = error.message;
++        statusBox.className = 'status error';
++        statusValue.textContent = 'ERROR';
++        startButton.disabled = false;
++        startButton.textContent = 'Start New Hunt';
++      }
++    }
++
++    async function refreshStatus() {
++      try {
++        const res = await fetch('/api/get-status');
++        if (!res.ok) return;
++        const data = await res.json();
++
++        statusValue.textContent = data.hunt_status.toUpperCase();
++        statusBox.className = `status ${data.hunt_status}`;
++        errorMessage.textContent = data.last_error || '';
++
++        if (data.found_files && data.found_files.length) {
++          artifactList.innerHTML = '';
++          data.found_files.forEach((file) => {
++            const li = document.createElement('li');
++            li.textContent = file;
++            artifactList.appendChild(li);
++          });
++        } else {
++          artifactList.innerHTML = '<li>No artifacts detected yet.</li>';
++        }
++
++        finalResult.textContent = JSON.stringify(data.final_result, null, 2);
++
++        if (data.hunt_status !== 'running') {
++          startButton.disabled = false;
++          startButton.textContent = 'Start New Hunt';
++        }
++      } catch (err) {
++        console.error('Status polling error', err);
++        statusBox.className = 'status error';
++        statusValue.textContent = 'ERROR';
++      }
++    }
++
++    setInterval(refreshStatus, 2000);
++    refreshStatus();
++  </script>
++</body>
++</html>
+
+
+
+
+Tab 2
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**more context
+
+
+Here is the "Phase 4: Dynamic Control Hub" report.
+
+
+---
+
+
+## **Phase 4: Dynamic Control Hub (Build Plan)**
+
+
+**Project:** V11.0 "HPC-SDG" Suite
+**Mandate:** This report details the build plan for the web-based control plane, which replaces the manual CLI-driven process.
+**Pivot Citation:** Per our combined review, the "Celery/Dask" orchestration concept is officially decommissioned as non-viable. The following "Web-Based Control Plane" is the approved architecture.
+
+
+---
+
+
+## **Section 1: The Meta-Orchestrator (app.py)**
+
+
+This component, `app.py`, is the new, persistent center of the entire suite. It replaces the previous, manual `!python run.py hunt` execution model.
+
+
+* **Technology:** A lightweight Flask server.
+* **Role 1: Signaler (Meta-Orchestrator)**
+    * This server will provide the primary API for managing the simulation suite.
+    * It will expose key endpoints for the web-based hub, including:
+        * `POST /api/start-hunt`: Triggers the execution of a new simulation hunt (see Section 2).
+        * `GET /api/get-status`: Provides the current state of the simulation and analysis (see Section 3).
+        * `GET /`: Serves the `index.html` control hub.
+* **Role 2: Watcher (Layer 2 Orchestrator)**
+    * Upon startup, `app.py` will launch a simple, non-blocking background thread (using Python's `threading` library).
+    * This "Watcher" thread will continuously monitor the `provenance_reports` directory for new `provenance.json` files.
+    * When a new file is detected, the Watcher will automatically spawn a subprocess to trigger the "Layer 2" analysis pipeline (e.g., TDA, BSSN-check, plotting scripts).
+    * Upon completion of this analysis, the Watcher will update a central `status.json` file with key results, metrics, and new plot filepaths.
+
+
+---
+
+
+## **Section 2: The Core Engine (Refactor)**
+
+
+This section details the refactor of the existing `adaptive_hunt_orchestrator.py` from a standalone script into a callable Python module.
+
+
+* **Conversion to Module:** The file will be refactored to be importable (e.g., `import core_engine`).
+* **Callable Function:** The `main()` function and argument parsing logic will be refactored into a single, callable function:
+    * `def execute_hunt(num_generations: int, population_size: int):`
+* **Logging:** All `print()` statements will be removed and replaced with Python's `logging` module. All logs will be directed to a dedicated `aste_hunt.log` file for persistent, machine-readable records.
+* **The New Call Chain:**
+    1.  The Flask server (`app.py`) receives a request at the `/api/start-hunt` endpoint.
+    2.  The endpoint function imports the refactored module (`from core_engine import execute_hunt`).
+    3.  It spawns a **new background thread** and calls `execute_hunt()` within it, passing the parameters from the API request.
+    4.  This architecture explicitly prevents the "Core Engine" (the hot, JAX-based Layer 1) from blocking or freezing the web server.
+
+
+---
+
+
+## **Section 3: The Interactive Hub (HTML)**
+
+
+The `app.py` server will serve a single `index.html` file, which will act as the unified control and visualization hub. This design achieves the "hot/cold" decoupling goal.
+
+
+* **Layer 1 Control (The "Hot" Layer):**
+    * The HTML file will feature a "Start Hunt" button within a simple form (to specify generations, population, etc.).
+    * Clicking this button will send a `POST` request to the `/api/start-hunt` endpoint on the `app.py` server.
+    * This is the *only* interaction the hub has with the "hot" JAX core. The hub *triggers* the hunt but does not "talk" to it directly.
+* **Layer 2 Visualization (The "Cold" Layer):**
+    * The HTML file will feature a "Live Status" dashboard.
+    * This dashboard will use JavaScript to periodically (e.g., every 5 seconds) send a `GET` request to the `/api/get-status` endpoint.
+    * This endpoint will simply read and return the `status.json` file that the "Watcher" thread (Section 1) maintains.
+    * The dashboard will then parse this JSON to update statistics (e.g., "Best SSE so far"), display plots, and report the current status, achieving live visualization without any performance-intensive coupling to the simulation itself.
+
+
+---
+
+
+## **Section 4: The Scalability Path (Colab to Cloud VM)**
+
+
+This architecture is designed for a seamless transition from a local "lab" environment to a distributed, high-performance cloud deployment.
+
+
+* **Phase A: Colab (Lab Environment)**
+    * You run `!python app.py`.
+    * This single command initiates one Python process.
+    * This process runs:
+        1.  The Flask web server.
+        2.  The "Watcher" background thread.
+        3.  The "Core Engine" (`execute_hunt`) in a third thread.
+    * This creates a fully-contained, testable, end-to-end environment for development and debugging.
+* **Phase B: Cloud VM (Distributed Production)**
+    * The architecture is distributed, not changed.
+    * **Control VM:** A lightweight, public-facing VM (e.g., a 2-core cloud instance) runs the `app.py` process. This VM hosts the web hub and API.
+    * **HPC/JAX VMs:** One or more dedicated, high-power JAX VMs are provisioned for the computation.
+    * **Refactor:** The `execute_hunt()` function on the "Control VM" is modified. Instead of importing and running `worker_sncgl_sdg.py` locally, it now uses `ssh` (or a cloud-native API) to remotely execute that worker script on the dedicated JAX VMs, passing the necessary parameters.
+    * This maintains the decoupled architecture while scaling compute power horizontally. The Control Hub remains the lightweight, central "brain" of the operation.
+
+
+**more context
+
+
+brief examples of responses'
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**and 
+
+
+This is a fantastic step\! Let's build the complete, runnable code for the **Dynamic Control Hub**.
+
+
+This solution is broken into three files that work together:
+
+
+1.  `app.py`: The Python **Flask server** that acts as the backend. It starts the hunt, watches for files, and serves status updates.
+2.  `index.html`: The HTML/JavaScript **frontend** you'll view in your browser. It provides the "Start Hunt" button and the live-updating dashboard.
+3.  `create_mock_artifacts.py`: A **placeholder script** that *simulates* a simulation run. It creates the a `...quantule_events.csv` and a `provenance_...json` file with a delay, allowing us to test the hub's watcher logic without running a real, multi-hour simulation.
+
+
+Here is the complete code and the instructions to run it.
+
+
+-----
+
+
+### 1\. `app.py` (The Flask Backend)
+
+
+This is the main control hub server. It's responsible for starting the simulation (in a separate thread) and providing a `/status` endpoint that the frontend can check for live updates.
+
+
+```python
+## app.py
+#
+# The backend for the Phase 4: Dynamic Control Hub.
+# This server launches simulation hunts and watches for the resulting artifacts.
+#
+# Dependencies:
+# pip install Flask
+#
+import os
+import subprocess
+import threading
+import time
+import glob
+import json
+from flask import Flask, render_template, jsonify, request
+
+
+# --- Shared Global State ---
+# We use global variables and a lock to safely share status
+# between the web request threads and the background hunter thread.
+#
+# DO NOT access these directly without acquiring the `state_lock`!
+state_lock = threading.Lock()
+hunt_status = "Idle" # "Idle", "Running", "Complete", "Error"
+hunt_process = None # Will hold the subprocess.Popen object
+found_files = []      # List of artifacts we've found
+final_result = {}       # The parsed content of the final provenance.json
+# ---------------------------
+
+
+app = Flask(__name__)
+
+
+def execute_hunt_thread():
+    """
+    This function runs in a separate thread.
+    It executes the simulation orchestrator and sets the final status.
+    """
+    global hunt_status, hunt_process, found_files, final_result
+    
+    # 1. --- Set status to "Running" ---
+    with state_lock:
+        hunt_status = "Running"
+        found_files = []
+        final_result = {}
+
+
+    print("[Hub] Starting new hunt...")
+
+
+    # 2. --- Launch the subprocess ---
+    #
+    # IMPORTANT: For this test, we are calling our MOCK script.
+    # To run your REAL simulation, change this command to:
+    # ['python3', 'adaptive_hunt_orchestrator.py']
+    #
+    try:
+        # We use the placeholder to test the hub
+        cmd = ['python3', 'create_mock_artifacts.py'] 
+        
+        # In a real scenario, you'd call the orchestrator:
+        # cmd = ['python3', 'adaptive_hunt_orchestrator.py'] 
+
+
+        # Popen is non-blocking
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with state_lock:
+            hunt_process = process
+
+
+        # 3. --- Wait for the process to complete ---
+        # We get the output/error to report if something goes wrong
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+
+
+        with state_lock:
+            if return_code != 0:
+                print(f"[Hub] Hunt process failed with code {return_code}.")
+                print(f"[Hub] STDERR: {stderr}")
+                hunt_status = "Error"
+                final_result = {"error": "Hunt process failed.", "details": stderr}
+            else:
+                print("[Hub] Hunt process completed successfully.")
+                # The watcher thread will set the status to "Complete"
+                # when it finds the provenance.json file.
+                # If the process finishes but no file is found,
+                # the watcher will eventually time out (or we can add a timeout).
+                pass
+
+
+    except Exception as e:
+        with state_lock:
+            print(f"[Hub] Exception during hunt execution: {e}")
+            hunt_status = "Error"
+            final_result = {"error": str(e)}
+    finally:
+        with state_lock:
+            hunt_process = None
+
+
+def watch_for_artifacts_thread():
+    """
+    This function runs in a separate, continuous background thread.
+    It scans the directory for our target artifacts and updates the global state.
+    """
+    global hunt_status, found_files, final_result
+    print("[Watcher] Watcher thread started.")
+    
+    while True:
+        try:
+            # We only watch if a hunt is "Running"
+            with state_lock:
+                current_status = hunt_status
+            
+            if current_status == "Running":
+                # --- Check for Profiler Artifact ---
+                profiler_files = glob.glob("*_quantule_events.csv")
+                
+                # --- Check for Final Provenance Artifact ---
+                provenance_files = glob.glob("provenance_*.json")
+
+
+                with state_lock:
+                    # Add any new files to our list
+                    all_artifacts = set(profiler_files + provenance_files)
+                    for f in all_artifacts:
+                        if f not in found_files:
+                            print(f"[Watcher] Found new artifact: {f}")
+                            found_files.append(f)
+                    
+                    # --- If we find the final report, the hunt is Complete ---
+                    if provenance_files:
+                        print(f"[Watcher] Found provenance file: {provenance_files[0]}")
+                        try:
+                            # Read the file
+                            with open(provenance_files[0], 'r') as f:
+                                data = json.load(f)
+                            
+                            # Update global state
+                            hunt_status = "Complete"
+                            final_result = data
+                            print(f"[Watcher] Hunt marked as Complete.")
+                        
+                        except Exception as e:
+                            print(f"[Watcher] Error parsing JSON from {provenance_files[0]}: {e}")
+                            hunt_status = "Error"
+                            final_result = {"error": f"Failed to parse {provenance_files[0]}"}
+            
+            # Sleep for a few seconds before checking again
+            time.sleep(2)
+            
+        except Exception as e:
+            # Don't let the watcher thread die
+            print(f"[Watcher] Error in watcher loop: {e}")
+            time.sleep(5)
+
+
+
+
+# --- Flask HTTP Routes ---
+
+
+@app.route('/')
+def index():
+    """Serves the main HTML dashboard."""
+    # The 'index.html' file must be in a folder named 'templates'
+    # in the same directory as this app.py file.
+    return render_template('index.html')
+
+
+@app.route('/start_hunt', methods=['POST'])
+def start_hunt():
+    """
+    API endpoint to start a new hunt.
+    It's triggered by the "Start New Hunt" button.
+    """
+    global hunt_status
+    
+    with state_lock:
+        if hunt_status == "Running":
+            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
+        
+        # Start the hunt in a new thread
+        hunt_thread = threading.Thread(target=execute_hunt_thread, daemon=True)
+        hunt_thread.start()
+        
+    return jsonify({"status": "success", "message": "Hunt started."})
+
+
+@app.route('/status')
+def get_status():
+    """
+    API endpoint for the frontend to poll.
+    Returns the current shared state as JSON.
+    """
+    with state_lock:
+        # Return a copy of the state
+        status_data = {
+            "hunt_status": hunt_status,
+            "found_files": list(found_files),
+            "final_result": final_result
+        }
+    return jsonify(status_data)
+
+
+# --- Main Entry Point ---
+
+
+if __name__ == '__main__':
+    # Start the background watcher thread
+    watcher = threading.Thread(target=watch_for_artifacts_thread, daemon=True)
+    watcher.start()
+    
+    # Start the Flask web server
+    print("--- Dynamic Control Hub ---")
+    print("Starting Flask server at http://127.0.0.1:5000")
+    print("Open this URL in your browser.")
+    app.run(debug=True, port=5000)
+```
+
+
+-----
+
+
+### 2\. `templates/index.html` (The Frontend)
+
+
+You must create a new folder named `templates` in the same directory as `app.py`. Save this file *inside* that `templates` folder.
+
+
+```html
+@DOCTYPE html
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Control Hub</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #c0c0c0; cursor: not-allowed; }
+        #status-box { margin-top: 20px; padding: 15px; border-radius: 5px; }
+        .status-idle { background: #e9e9e9; }
+        .status-running { background: #e0f0ff; border: 1px solid #b3d7ff; }
+        .status-complete { background: #dfffe3; border: 1px solid #b3ffc1; }
+        .status-error { background: #ffeded; border: 1px solid #ffb3b3; }
+        #hunt-status { font-size: 24px; font-weight: bold; }
+        pre { background-color: #2b2b2b; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        ul { list-style-type: "📁 "; }
+    </style>
+</head>
+<body>
+
+
+    <div class="container">
+        <h1>Phase 4: Dynamic Control Hub</h1>
+        
+        <button id="start-hunt-btn" onclick="startHunt()">
+            Start New Hunt
+        </button>
+        
+        <hr style="margin: 25px 0;">
+
+
+        <h2>📊 Live Hunt Status</h2>
+        
+        <div id="status-box" class="status-idle">
+            <strong>Current Status:</strong>
+            <span id="hunt-status">Idle</span>
+        </div>
+
+
+        <h3>Found Artifacts</h3>
+        <ul id="artifact-list">
+            <li>(No artifacts found yet)</li>
+        </ul>
+
+
+        <h3>Final Result (from Provenance)</h3>
+        <pre id="final-result-json">
+{
+  "status": "Waiting for provenance.json..."
+}
+        </pre>
+    </div>
+
+
+    <script>
+        const startBtn = document.getElementById('start-hunt-btn');
+        const huntStatusEl = document.getElementById('hunt-status');
+        const statusBoxEl = document.getElementById('status-box');
+        const artifactListEl = document.getElementById('artifact-list');
+        const finalResultEl = document.getElementById('final-result-json');
+
+
+        /**
+         * Calls the backend to start a new hunt.
+         */
+        async function startHunt() {
+            startBtn.disabled = true;
+            startBtn.textContent = "Starting...";
+
+
+            try {
+                const response = await fetch('/start_hunt', { method: 'POST' });
+                const data = await response.json();
+
+
+                if (response.ok) {
+                    huntStatusEl.textContent = "Running";
+                    statusBoxEl.className = "status-running";
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    alert('Error: ' + data.message);
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+            } catch (error) {
+                alert('Failed to connect to server: ' + error);
+                startBtn.disabled = false;
+                startBtn.textContent = "Start New Hunt";
+            }
+        }
+
+
+        /**
+         * Polls the /status endpoint and updates the UI.
+         */
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) {
+                    console.error("Failed to fetch status.");
+                    return;
+                }
+                
+                const data = await response.json();
+
+
+                // 1. Update Status Badge
+                huntStatusEl.textContent = data.hunt_status;
+                statusBoxEl.className = `status-${data.hunt_status.toLowerCase()}`;
+
+
+                // 2. Update Artifacts List
+                if (data.found_files.length > 0) {
+                    artifactListEl.innerHTML = ''; // Clear list
+                    data.found_files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.textContent = file;
+                        artifactListEl.appendChild(li);
+                    });
+                } else {
+                    artifactListEl.innerHTML = '<li>(No artifacts found yet)</li>';
+                }
+
+
+                // 3. Update Final Result JSON
+                finalResultEl.textContent = JSON.stringify(data.final_result, null, 2);
+
+
+                // 4. Update Button State
+                if (data.hunt_status === "Running") {
+                    startBtn.disabled = true;
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+
+
+            } catch (error) {
+                console.error("Error during status update:", error);
+                huntStatusEl.textContent = "Connection Error";
+                statusBoxEl.className = "status-error";
+            }
+        }
+
+
+        // --- Start the polling interval ---
+        // Poll every 2 seconds (2000 milliseconds)
+        setInterval(updateStatus, 2000);
+        
+        // Also run once on page load
+        updateStatus();
+    </script>
+
+
+</body>
+</html>
+```
+
+
+-----
+
+
+### 3\. `create_mock_artifacts.py` (The Placeholder)
+
+
+Save this file in the **same directory** as `app.py`. This script simulates the work of your `adaptive_hunt_orchestrator.py` and `validation_pipeline.py` by creating the files the hub is looking for.
+
+
+```python
+## create_mock_artifacts.py
+#
+# This is a placeholder script to TEST the control hub.
+# It simulates a long-running simulation by:
+# 1. Waiting for 5 seconds.
+# 2. Creating a mock profiler CSV.
+# 3. Waiting for 5 more seconds.
+# 4. Creating the final "provenance.json" report.
+#
+import time
+import json
+import random
+import os
+
+
+# Clean up old files before we start
+print("[Mock] Cleaning up old artifacts...")
+for f in glob.glob("*_quantule_events.csv"):
+    os.remove(f)
+for f in glob.glob("provenance_*.json"):
+    os.remove(f)
+
+
+# --- 1. Simulate first part of the simulation ---
+print("[Mock] Simulation running... (Step 1/2)")
+time.sleep(5)
+
+
+# --- 2. Create the Quantule Profiler artifact ---
+run_id = f"mock_run_{random.randint(1000, 9999)}"
+profiler_filename = f"{run_id}_quantule_events.csv"
+print(f"[Mock] Creating artifact: {profiler_filename}")
+with open(profiler_filename, "w") as f:
+    f.write("event_type,timestamp,metric_value\n")
+    f.write("INIT,0.001,0\n")
+    f.write("QUANTULE_FLIP,5.123,8.45\n")
+    f.write("QUANTULE_FLIP,7.456,9.12\n")
+
+
+# --- 3. Simulate validation pipeline ---
+print("[Mock] Simulation running... (Step 2/2)")
+time.sleep(5)
+
+
+# --- 4. Create the final Provenance artifact ---
+provenance_filename = f"provenance_{run_id}.json"
+print(f"[Mock] Creating final artifact: {provenance_filename}")
+
+
+mock_results = {
+    "run_id": run_id,
+    "timestamp": time.time(),
+    "parameters": {
+        "param_D": 0.8,
+        "param_eta": 1.2,
+        "param_a_coupling": 0.5
+    },
+    "validation_status": "PASS: SSE-LOCK",
+    "metrics": {
+        "Calculated SSE": 0.087123,
+        "Phase Coherence Score (PCS)": 0.9981,
+        "Principled Localization Index (PLI)": 1.002,
+        "Informational Compressibility (IC)": 0.0015
+    }
+}
+
+
+with open(provenance_filename, "w") as f:
+    json.dump(mock_results, f, indent=2)
+
+
+print("[Mock] Hunt simulation complete.")
+```
+
+
+-----
+
+
+### 🚀 How to Run the Test
+
+
+Your directory structure should look like this:
+
+
+```
+/your_project_directory/
+    ├── app.py
+    ├── create_mock_artifacts.py
+    └── /templates/
+        └── index.html
+```
+
+
+**Instructions:**
+
+
+1.  **Install Flask:**
+
+
+    ```bash
+    pip install Flask
+    ```
+
+
+2.  **Run the Hub Server:**
+    Open your terminal, navigate to `/your_project_directory/`, and run:
+
+
+    ```bash
+    python3 app.py
+    ```
+
+
+3.  **Open the Hub:**
+    You will see output like this:
+
+
+    ```
+    [Watcher] Watcher thread started.
+    --- Dynamic Control Hub ---
+    Starting Flask server at http://127.0.0.1:5000
+    Open this URL in your browser.
+    ```
+
+
+    Open **`http://127.0.0.1:5000`** in your web browser.
+
+
+4.  **Test the Hub:**
+
+
+      * Click the **"Start New Hunt"** button.
+      * The button will disable, and the status will change to **"Running"**.
+      * In your terminal running `app.py`, you'll see the log output from `create_mock_artifacts.py`.
+      * Watch the "Found Artifacts" list in your browser. After 5 seconds, you'll see the `.csv` file appear.
+      * After 5 more seconds, the `provenance_....json` file will appear.
+      * The status will change to **"Complete"**, the "Final Result" box will fill with the JSON data, and the "Start New Hunt" button will re-enable.
+
+
+This gives you a fully functional, testable control hub. When you are ready to use your *real* simulation, you just need to edit `app.py` and change the `cmd` variable to point to `adaptive_hunt_orchestrator.py`\!
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Added a Flask-based control hub with start/status endpoints, persistent state, and a background watcher that tracks provenance and quantule event artifacts for live status updates.
+* Provided a callable hunt executor stub that logs to aste_hunt.log and invokes the mock artifact generator, ready to be swapped with the hardened orchestrator command.
+* Included a mock artifact generator and a lightweight HTML dashboard to launch hunts, poll status, and display discovered artifacts and provenance results.
+Testing
+* ✅ python -m py_compile control_hub/app.py control_hub/core_engine.py control_hub/create_mock_artifacts.py
+Files (5)
+* advanced validation suite/control_hub/__init__.py
+* New
+* * advanced validation suite/control_hub/app.py
+* New
+* * advanced validation suite/control_hub/core_engine.py
+* New
+* * advanced validation suite/control_hub/create_mock_artifacts.py
+* New
+* * advanced validation suite/control_hub/templates/index.html
+* New
+* diff --git a/advanced validation suite/control_hub/__init__.py b/advanced validation suite/control_hub/__init__.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..6a6ba5e4bcb6e4bc522ba97130a78052d7950229
+--- /dev/null
++++ b/advanced validation suite/control_hub/__init__.py        
+@@ -0,0 +1 @@
++"""Package initializer for the Dynamic Control Hub prototype."""
+diff --git a/advanced validation suite/control_hub/app.py b/advanced validation suite/control_hub/app.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..7b7678b511519f46c334e780f3cc5bdaedc6bcfb
+--- /dev/null
++++ b/advanced validation suite/control_hub/app.py        
+@@ -0,0 +1,145 @@
++"""Flask control hub for Phase 4 Dynamic Control Hub prototype."""
++from __future__ import annotations
++
++import json
++import threading
++import time
++from pathlib import Path
++from typing import Any, Dict
++
++from flask import Flask, jsonify, render_template, request
++
++try:  # pragma: no cover - import guard for script vs module execution
++    from .core_engine import DEFAULT_GENERATIONS, DEFAULT_POPULATION, execute_hunt
++except ImportError:  # When executed as a loose script
++    from core_engine import (  # type: ignore
++        DEFAULT_GENERATIONS,
++        DEFAULT_POPULATION,
++        execute_hunt,
++    )
++
++BASE_DIR = Path(__file__).parent
++ARTIFACT_DIR = BASE_DIR / "artifacts"
++STATUS_FILE = ARTIFACT_DIR / "status.json"
++
++app = Flask(__name__, template_folder=str(BASE_DIR / "templates"))
++
++state_lock = threading.Lock()
++state: Dict[str, Any] = {
++    "hunt_status": "idle",
++    "found_files": [],
++    "final_result": {},
++}
++
++
++def _persist_state() -> None:
++    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
++    STATUS_FILE.write_text(json.dumps(state, indent=2))
++
++
++def _load_state() -> None:
++    if STATUS_FILE.exists():
++        try:
++            loaded = json.loads(STATUS_FILE.read_text())
++            state.update(loaded)
++        except json.JSONDecodeError:
++            # Corrupt status should not block startup; reset to defaults.
++            pass
++
++
++def watch_for_artifacts() -> None:
++    """Background watcher that reacts to new output artifacts."""
++    while True:
++        time.sleep(2)
++        with state_lock:
++            current_status = state.get("hunt_status", "idle")
++        if current_status != "running":
++            continue
++
++        provenance_files = sorted(ARTIFACT_DIR.glob("provenance_*.json"))
++        quantule_events = sorted(ARTIFACT_DIR.glob("*_quantule_events.csv"))
++        newly_found = []
++
++        with state_lock:
++            known = set(state.get("found_files", []))
++            for file_path in [*quantule_events, *provenance_files]:
++                if file_path.name not in known:
++                    known.add(file_path.name)
++                    newly_found.append(file_path.name)
++            if newly_found:
++                state["found_files"] = sorted(known)
++
++            if provenance_files:
++                try:
++                    latest = provenance_files[-1]
++                    payload = json.loads(latest.read_text())
++                    state["final_result"] = payload
++                    state["hunt_status"] = "complete"
++                except Exception as exc:  # noqa: BLE001
++                    state["final_result"] = {"error": str(exc)}
++                    state["hunt_status"] = "error"
++            _persist_state()
++
++
++def _start_hunt_thread(num_generations: int, population_size: int) -> None:
++    try:
++        execute_hunt(
++            artifact_dir=ARTIFACT_DIR,
++            num_generations=num_generations,
++            population_size=population_size,
++        )
++    finally:
++        with state_lock:
++            if state.get("hunt_status") == "running":
++                state["hunt_status"] = "idle"
++                _persist_state()
++
++
++@app.route("/")
++def index() -> str:
++    return render_template("index.html")
++
++
++@app.route("/api/start-hunt", methods=["POST"])
++def start_hunt() -> Any:
++    payload = request.get_json(silent=True) or {}
++    num_generations = int(payload.get("num_generations", DEFAULT_GENERATIONS))
++    population_size = int(payload.get("population_size", DEFAULT_POPULATION))
++
++    with state_lock:
++        if state.get("hunt_status") == "running":
++            return jsonify({"status": "error", "message": "Hunt already running"}), 409
++        state.update(
++            {
++                "hunt_status": "running",
++                "found_files": [],
++                "final_result": {},
++            }
++        )
++        _persist_state()
++
++    worker = threading.Thread(
++        target=_start_hunt_thread,
++        kwargs={"num_generations": num_generations, "population_size": population_size},
++        daemon=True,
++    )
++    worker.start()
++    return jsonify({"status": "started", "message": "Hunt kicked off"})
++
++
++@app.route("/api/get-status", methods=["GET"])
++def get_status() -> Any:
++    with state_lock:
++        snapshot = dict(state)
++    return jsonify(snapshot)
++
++
++def _bootstrap() -> None:
++    _load_state()
++    watcher = threading.Thread(target=watch_for_artifacts, daemon=True)
++    watcher.start()
++
++
++if __name__ == "__main__":
++    _bootstrap()
++    app.run(debug=True, port=5000)
+diff --git a/advanced validation suite/control_hub/core_engine.py b/advanced validation suite/control_hub/core_engine.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..365074a16bf38a53b0deff96f6a7598449ac56c0
+--- /dev/null
++++ b/advanced validation suite/control_hub/core_engine.py        
+@@ -0,0 +1,84 @@
++"""Core engine stub for executing hunts.
++
++This module refactors the hunt entrypoint into a callable function
++that the Flask control hub can import. The implementation here is a
++lightweight placeholder; integrate the real adaptive_hunt_orchestrator
++logic where indicated.
++"""
++from __future__ import annotations
++
++import logging
++import subprocess
++import sys
++from pathlib import Path
++from typing import Iterable, List
++
++DEFAULT_GENERATIONS = 1
++DEFAULT_POPULATION = 1
++
++
++def _build_command(output_dir: Path, num_generations: int, population_size: int) -> List[str]:
++    """Construct the command used to run the real hunt pipeline.
++
++    Replace the mock placeholder with the actual orchestrator invocation when
++    integrating with the hardened JAX pipeline.
++    """
++    mock_script = Path(__file__).parent / "create_mock_artifacts.py"
++    cmd: List[str] = [sys.executable, str(mock_script), "--output-dir", str(output_dir),
++                      "--generations", str(num_generations), "--population", str(population_size)]
++    return cmd
++
++
++def execute_hunt(
++    *,
++    artifact_dir: Path,
++    num_generations: int = DEFAULT_GENERATIONS,
++    population_size: int = DEFAULT_POPULATION,
++) -> None:
++    """Run a hunt in a background-safe manner.
++
++    All logs are written to ``artifact_dir/aste_hunt.log``. This function is
++    designed to be called from a thread spawned by ``app.py`` so it returns
++    after the subprocess finishes.
++    """
++    artifact_dir.mkdir(parents=True, exist_ok=True)
++
++    log_file = artifact_dir / "aste_hunt.log"
++    logging.basicConfig(
++        filename=log_file,
++        level=logging.INFO,
++        format="%(asctime)s [%(levelname)s] %(message)s",
++    )
++
++    logging.info("Starting hunt: generations=%s population=%s", num_generations, population_size)
++
++    command = _build_command(artifact_dir, num_generations, population_size)
++    logging.info("Executing command: %s", " ".join(command))
++
++    try:
++        process = subprocess.Popen(
++            command,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE,
++            cwd=artifact_dir,
++            text=True,
++        )
++        stdout, stderr = process.communicate()
++        logging.info("Hunt stdout:\n%s", stdout)
++        if stderr:
++            logging.warning("Hunt stderr:\n%s", stderr)
++
++        if process.returncode != 0:
++            logging.error("Hunt failed with return code %s", process.returncode)
++        else:
++            logging.info("Hunt completed successfully")
++    except Exception:  # noqa: BLE001 - bubble details into the log
++        logging.exception("Unexpected error during hunt execution")
++        raise
++
++
++__all__: Iterable[str] = [
++    "execute_hunt",
++    "DEFAULT_GENERATIONS",
++    "DEFAULT_POPULATION",
++]
+diff --git a/advanced validation suite/control_hub/create_mock_artifacts.py b/advanced validation suite/control_hub/create_mock_artifacts.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..e60387f029594a24227f89310016b05e7b7344d5
+--- /dev/null
++++ b/advanced validation suite/control_hub/create_mock_artifacts.py        
+@@ -0,0 +1,67 @@
++"""Create placeholder artifacts for the Dynamic Control Hub.
++
++This utility simulates a multi-stage run by emitting a profiler CSV and a
++provenance JSON file with slight delays. It is intended solely for local
++validation of the control hub wiring.
++"""
++from __future__ import annotations
++
++import argparse
++import json
++import random
++import time
++from pathlib import Path
++
++
++def _write_profiler_csv(target_dir: Path, run_id: str) -> Path:
++    profiler_path = target_dir / f"{run_id}_quantule_events.csv"
++    profiler_path.write_text(
++        """event_type,timestamp,metric_value\n"
++        "INIT,0.001,0\n"
++        "QUANTULE_FLIP,5.123,8.45\n"
++        "QUANTULE_FLIP,7.456,9.12\n"""
++    )
++    return profiler_path
++
++
++def _write_provenance_json(target_dir: Path, run_id: str, generations: int, population: int) -> Path:
++    provenance_path = target_dir / f"provenance_{run_id}.json"
++    provenance_payload = {
++        "run_id": run_id,
++        "generations": generations,
++        "population": population,
++        "validation_status": "PASS: SSE-LOCK",
++        "metrics": {
++            "Calculated SSE": 0.087123,
++            "Phase Coherence Score (PCS)": 0.9981,
++            "Principled Localization Index (PLI)": 1.002,
++            "Informational Compressibility (IC)": 0.0015,
++        },
++    }
++    provenance_path.write_text(json.dumps(provenance_payload, indent=2))
++    return provenance_path
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Generate mock artifacts for the control hub")
++    parser.add_argument("--output-dir", type=Path, default=Path.cwd())
++    parser.add_argument("--generations", type=int, default=1)
++    parser.add_argument("--population", type=int, default=1)
++    args = parser.parse_args()
++
++    args.output_dir.mkdir(parents=True, exist_ok=True)
++    run_id = f"mock_run_{random.randint(1000, 9999)}"
++
++    time.sleep(2)
++    profiler = _write_profiler_csv(args.output_dir, run_id)
++    print(f"[mock] created {profiler}")
++
++    time.sleep(2)
++    provenance = _write_provenance_json(args.output_dir, run_id, args.generations, args.population)
++    print(f"[mock] created {provenance}")
++
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/advanced validation suite/control_hub/templates/index.html b/advanced validation suite/control_hub/templates/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..b0148cf34e79491a02430a96a94004bcd4d3f8f9
+--- /dev/null
++++ b/advanced validation suite/control_hub/templates/index.html        
+@@ -0,0 +1,128 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++  <meta charset="UTF-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1.0">
++  <title>Phase 4 Dynamic Control Hub</title>
++  <style>
++    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f4f7f6; margin: 0; padding: 24px; }
++    .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,0.06); }
++    h1 { margin-top: 0; }
++    button { background: #2563eb; color: #fff; border: none; padding: 12px 18px; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background-color 0.2s ease; }
++    button:hover { background: #1d4ed8; }
++    button:disabled { background: #94a3b8; cursor: not-allowed; }
++    label { display: block; margin-bottom: 6px; font-weight: 600; }
++    input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #cbd5e1; margin-bottom: 14px; }
++    #status-box { margin: 16px 0; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; }
++    .status-idle { background: #f8fafc; }
++    .status-running { background: #e0f2fe; border-color: #bfdbfe; }
++    .status-complete { background: #dcfce7; border-color: #bbf7d0; }
++    .status-error { background: #fee2e2; border-color: #fecaca; }
++    ul { padding-left: 18px; }
++    pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; }
++  </style>
++</head>
++<body>
++  <div class="container">
++    <h1>Dynamic Control Hub</h1>
++    <p>Launch new hunts, watch for provenance, and monitor profiler events in real time.</p>
++
++    <section>
++      <h2>Start a Hunt</h2>
++      <label for="generations">Generations</label>
++      <input id="generations" type="number" min="1" value="1">
++
++      <label for="population">Population</label>
++      <input id="population" type="number" min="1" value="1">
++
++      <button id="start-hunt" onclick="startHunt()">Start Hunt</button>
++    </section>
++
++    <section>
++      <h2>Live Status</h2>
++      <div id="status-box" class="status-idle">
++        <strong>Current Status:</strong> <span id="hunt-status">idle</span>
++      </div>
++
++      <h3>Found Artifacts</h3>
++      <ul id="artifact-list"><li>(none yet)</li></ul>
++
++      <h3>Final Result</h3>
++      <pre id="final-result">{ "message": "Waiting for provenance file..." }</pre>
++    </section>
++  </div>
++
++  <script>
++    const statusBox = document.getElementById('status-box');
++    const huntStatus = document.getElementById('hunt-status');
++    const artifactList = document.getElementById('artifact-list');
++    const finalResult = document.getElementById('final-result');
++    const startButton = document.getElementById('start-hunt');
++
++    async function startHunt() {
++      startButton.disabled = true;
++      startButton.textContent = 'Starting…';
++
++      const payload = {
++        num_generations: Number(document.getElementById('generations').value) || 1,
++        population_size: Number(document.getElementById('population').value) || 1,
++      };
++
++      const response = await fetch('/api/start-hunt', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(payload),
++      });
++
++      if (!response.ok) {
++        const data = await response.json();
++        alert(data.message || 'Failed to start hunt');
++        startButton.disabled = false;
++        startButton.textContent = 'Start Hunt';
++        return;
++      }
++
++      startButton.textContent = 'Hunt running…';
++      huntStatus.textContent = 'running';
++      updateStatusBox('running');
++    }
++
++    function updateStatusBox(status) {
++      statusBox.className = `status-${status}`;
++      huntStatus.textContent = status;
++      startButton.disabled = status === 'running';
++      startButton.textContent = status === 'running' ? 'Hunt running…' : 'Start Hunt';
++    }
++
++    function renderArtifacts(files) {
++      artifactList.innerHTML = '';
++      if (!files || files.length === 0) {
++        artifactList.innerHTML = '<li>(none yet)</li>';
++        return;
++      }
++      files.forEach(file => {
++        const li = document.createElement('li');
++        li.textContent = file;
++        artifactList.appendChild(li);
++      });
++    }
++
++    async function pollStatus() {
++      try {
++        const response = await fetch('/api/get-status');
++        if (!response.ok) return;
++        const data = await response.json();
++        updateStatusBox(data.hunt_status || 'idle');
++        renderArtifacts(data.found_files || []);
++        finalResult.textContent = JSON.stringify(data.final_result || {}, null, 2);
++      } catch (error) {
++        console.error('Status polling failed', error);
++        updateStatusBox('error');
++      }
++    }
++
++    setInterval(pollStatus, 2000);
++    pollStatus();
++  </script>
++</body>
++</html>
+
+
+
+
+Tab 3
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**more context
+
+
+Here is the "Phase 4: Dynamic Control Hub" report.
+
+
+---
+
+
+## **Phase 4: Dynamic Control Hub (Build Plan)**
+
+
+**Project:** V11.0 "HPC-SDG" Suite
+**Mandate:** This report details the build plan for the web-based control plane, which replaces the manual CLI-driven process.
+**Pivot Citation:** Per our combined review, the "Celery/Dask" orchestration concept is officially decommissioned as non-viable. The following "Web-Based Control Plane" is the approved architecture.
+
+
+---
+
+
+## **Section 1: The Meta-Orchestrator (app.py)**
+
+
+This component, `app.py`, is the new, persistent center of the entire suite. It replaces the previous, manual `!python run.py hunt` execution model.
+
+
+* **Technology:** A lightweight Flask server.
+* **Role 1: Signaler (Meta-Orchestrator)**
+    * This server will provide the primary API for managing the simulation suite.
+    * It will expose key endpoints for the web-based hub, including:
+        * `POST /api/start-hunt`: Triggers the execution of a new simulation hunt (see Section 2).
+        * `GET /api/get-status`: Provides the current state of the simulation and analysis (see Section 3).
+        * `GET /`: Serves the `index.html` control hub.
+* **Role 2: Watcher (Layer 2 Orchestrator)**
+    * Upon startup, `app.py` will launch a simple, non-blocking background thread (using Python's `threading` library).
+    * This "Watcher" thread will continuously monitor the `provenance_reports` directory for new `provenance.json` files.
+    * When a new file is detected, the Watcher will automatically spawn a subprocess to trigger the "Layer 2" analysis pipeline (e.g., TDA, BSSN-check, plotting scripts).
+    * Upon completion of this analysis, the Watcher will update a central `status.json` file with key results, metrics, and new plot filepaths.
+
+
+---
+
+
+## **Section 2: The Core Engine (Refactor)**
+
+
+This section details the refactor of the existing `adaptive_hunt_orchestrator.py` from a standalone script into a callable Python module.
+
+
+* **Conversion to Module:** The file will be refactored to be importable (e.g., `import core_engine`).
+* **Callable Function:** The `main()` function and argument parsing logic will be refactored into a single, callable function:
+    * `def execute_hunt(num_generations: int, population_size: int):`
+* **Logging:** All `print()` statements will be removed and replaced with Python's `logging` module. All logs will be directed to a dedicated `aste_hunt.log` file for persistent, machine-readable records.
+* **The New Call Chain:**
+    1.  The Flask server (`app.py`) receives a request at the `/api/start-hunt` endpoint.
+    2.  The endpoint function imports the refactored module (`from core_engine import execute_hunt`).
+    3.  It spawns a **new background thread** and calls `execute_hunt()` within it, passing the parameters from the API request.
+    4.  This architecture explicitly prevents the "Core Engine" (the hot, JAX-based Layer 1) from blocking or freezing the web server.
+
+
+---
+
+
+## **Section 3: The Interactive Hub (HTML)**
+
+
+The `app.py` server will serve a single `index.html` file, which will act as the unified control and visualization hub. This design achieves the "hot/cold" decoupling goal.
+
+
+* **Layer 1 Control (The "Hot" Layer):**
+    * The HTML file will feature a "Start Hunt" button within a simple form (to specify generations, population, etc.).
+    * Clicking this button will send a `POST` request to the `/api/start-hunt` endpoint on the `app.py` server.
+    * This is the *only* interaction the hub has with the "hot" JAX core. The hub *triggers* the hunt but does not "talk" to it directly.
+* **Layer 2 Visualization (The "Cold" Layer):**
+    * The HTML file will feature a "Live Status" dashboard.
+    * This dashboard will use JavaScript to periodically (e.g., every 5 seconds) send a `GET` request to the `/api/get-status` endpoint.
+    * This endpoint will simply read and return the `status.json` file that the "Watcher" thread (Section 1) maintains.
+    * The dashboard will then parse this JSON to update statistics (e.g., "Best SSE so far"), display plots, and report the current status, achieving live visualization without any performance-intensive coupling to the simulation itself.
+
+
+---
+
+
+## **Section 4: The Scalability Path (Colab to Cloud VM)**
+
+
+This architecture is designed for a seamless transition from a local "lab" environment to a distributed, high-performance cloud deployment.
+
+
+* **Phase A: Colab (Lab Environment)**
+    * You run `!python app.py`.
+    * This single command initiates one Python process.
+    * This process runs:
+        1.  The Flask web server.
+        2.  The "Watcher" background thread.
+        3.  The "Core Engine" (`execute_hunt`) in a third thread.
+    * This creates a fully-contained, testable, end-to-end environment for development and debugging.
+* **Phase B: Cloud VM (Distributed Production)**
+    * The architecture is distributed, not changed.
+    * **Control VM:** A lightweight, public-facing VM (e.g., a 2-core cloud instance) runs the `app.py` process. This VM hosts the web hub and API.
+    * **HPC/JAX VMs:** One or more dedicated, high-power JAX VMs are provisioned for the computation.
+    * **Refactor:** The `execute_hunt()` function on the "Control VM" is modified. Instead of importing and running `worker_sncgl_sdg.py` locally, it now uses `ssh` (or a cloud-native API) to remotely execute that worker script on the dedicated JAX VMs, passing the necessary parameters.
+    * This maintains the decoupled architecture while scaling compute power horizontally. The Control Hub remains the lightweight, central "brain" of the operation.
+
+
+**more context
+
+
+brief examples of responses'
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**and 
+
+
+This is a fantastic step\! Let's build the complete, runnable code for the **Dynamic Control Hub**.
+
+
+This solution is broken into three files that work together:
+
+
+1.  `app.py`: The Python **Flask server** that acts as the backend. It starts the hunt, watches for files, and serves status updates.
+2.  `index.html`: The HTML/JavaScript **frontend** you'll view in your browser. It provides the "Start Hunt" button and the live-updating dashboard.
+3.  `create_mock_artifacts.py`: A **placeholder script** that *simulates* a simulation run. It creates the a `...quantule_events.csv` and a `provenance_...json` file with a delay, allowing us to test the hub's watcher logic without running a real, multi-hour simulation.
+
+
+Here is the complete code and the instructions to run it.
+
+
+-----
+
+
+### 1\. `app.py` (The Flask Backend)
+
+
+This is the main control hub server. It's responsible for starting the simulation (in a separate thread) and providing a `/status` endpoint that the frontend can check for live updates.
+
+
+```python
+## app.py
+#
+# The backend for the Phase 4: Dynamic Control Hub.
+# This server launches simulation hunts and watches for the resulting artifacts.
+#
+# Dependencies:
+# pip install Flask
+#
+import os
+import subprocess
+import threading
+import time
+import glob
+import json
+from flask import Flask, render_template, jsonify, request
+
+
+# --- Shared Global State ---
+# We use global variables and a lock to safely share status
+# between the web request threads and the background hunter thread.
+#
+# DO NOT access these directly without acquiring the `state_lock`!
+state_lock = threading.Lock()
+hunt_status = "Idle" # "Idle", "Running", "Complete", "Error"
+hunt_process = None # Will hold the subprocess.Popen object
+found_files = []      # List of artifacts we've found
+final_result = {}       # The parsed content of the final provenance.json
+# ---------------------------
+
+
+app = Flask(__name__)
+
+
+def execute_hunt_thread():
+    """
+    This function runs in a separate thread.
+    It executes the simulation orchestrator and sets the final status.
+    """
+    global hunt_status, hunt_process, found_files, final_result
+    
+    # 1. --- Set status to "Running" ---
+    with state_lock:
+        hunt_status = "Running"
+        found_files = []
+        final_result = {}
+
+
+    print("[Hub] Starting new hunt...")
+
+
+    # 2. --- Launch the subprocess ---
+    #
+    # IMPORTANT: For this test, we are calling our MOCK script.
+    # To run your REAL simulation, change this command to:
+    # ['python3', 'adaptive_hunt_orchestrator.py']
+    #
+    try:
+        # We use the placeholder to test the hub
+        cmd = ['python3', 'create_mock_artifacts.py'] 
+        
+        # In a real scenario, you'd call the orchestrator:
+        # cmd = ['python3', 'adaptive_hunt_orchestrator.py'] 
+
+
+        # Popen is non-blocking
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with state_lock:
+            hunt_process = process
+
+
+        # 3. --- Wait for the process to complete ---
+        # We get the output/error to report if something goes wrong
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+
+
+        with state_lock:
+            if return_code != 0:
+                print(f"[Hub] Hunt process failed with code {return_code}.")
+                print(f"[Hub] STDERR: {stderr}")
+                hunt_status = "Error"
+                final_result = {"error": "Hunt process failed.", "details": stderr}
+            else:
+                print("[Hub] Hunt process completed successfully.")
+                # The watcher thread will set the status to "Complete"
+                # when it finds the provenance.json file.
+                # If the process finishes but no file is found,
+                # the watcher will eventually time out (or we can add a timeout).
+                pass
+
+
+    except Exception as e:
+        with state_lock:
+            print(f"[Hub] Exception during hunt execution: {e}")
+            hunt_status = "Error"
+            final_result = {"error": str(e)}
+    finally:
+        with state_lock:
+            hunt_process = None
+
+
+def watch_for_artifacts_thread():
+    """
+    This function runs in a separate, continuous background thread.
+    It scans the directory for our target artifacts and updates the global state.
+    """
+    global hunt_status, found_files, final_result
+    print("[Watcher] Watcher thread started.")
+    
+    while True:
+        try:
+            # We only watch if a hunt is "Running"
+            with state_lock:
+                current_status = hunt_status
+            
+            if current_status == "Running":
+                # --- Check for Profiler Artifact ---
+                profiler_files = glob.glob("*_quantule_events.csv")
+                
+                # --- Check for Final Provenance Artifact ---
+                provenance_files = glob.glob("provenance_*.json")
+
+
+                with state_lock:
+                    # Add any new files to our list
+                    all_artifacts = set(profiler_files + provenance_files)
+                    for f in all_artifacts:
+                        if f not in found_files:
+                            print(f"[Watcher] Found new artifact: {f}")
+                            found_files.append(f)
+                    
+                    # --- If we find the final report, the hunt is Complete ---
+                    if provenance_files:
+                        print(f"[Watcher] Found provenance file: {provenance_files[0]}")
+                        try:
+                            # Read the file
+                            with open(provenance_files[0], 'r') as f:
+                                data = json.load(f)
+                            
+                            # Update global state
+                            hunt_status = "Complete"
+                            final_result = data
+                            print(f"[Watcher] Hunt marked as Complete.")
+                        
+                        except Exception as e:
+                            print(f"[Watcher] Error parsing JSON from {provenance_files[0]}: {e}")
+                            hunt_status = "Error"
+                            final_result = {"error": f"Failed to parse {provenance_files[0]}"}
+            
+            # Sleep for a few seconds before checking again
+            time.sleep(2)
+            
+        except Exception as e:
+            # Don't let the watcher thread die
+            print(f"[Watcher] Error in watcher loop: {e}")
+            time.sleep(5)
+
+
+
+
+# --- Flask HTTP Routes ---
+
+
+@app.route('/')
+def index():
+    """Serves the main HTML dashboard."""
+    # The 'index.html' file must be in a folder named 'templates'
+    # in the same directory as this app.py file.
+    return render_template('index.html')
+
+
+@app.route('/start_hunt', methods=['POST'])
+def start_hunt():
+    """
+    API endpoint to start a new hunt.
+    It's triggered by the "Start New Hunt" button.
+    """
+    global hunt_status
+    
+    with state_lock:
+        if hunt_status == "Running":
+            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
+        
+        # Start the hunt in a new thread
+        hunt_thread = threading.Thread(target=execute_hunt_thread, daemon=True)
+        hunt_thread.start()
+        
+    return jsonify({"status": "success", "message": "Hunt started."})
+
+
+@app.route('/status')
+def get_status():
+    """
+    API endpoint for the frontend to poll.
+    Returns the current shared state as JSON.
+    """
+    with state_lock:
+        # Return a copy of the state
+        status_data = {
+            "hunt_status": hunt_status,
+            "found_files": list(found_files),
+            "final_result": final_result
+        }
+    return jsonify(status_data)
+
+
+# --- Main Entry Point ---
+
+
+if __name__ == '__main__':
+    # Start the background watcher thread
+    watcher = threading.Thread(target=watch_for_artifacts_thread, daemon=True)
+    watcher.start()
+    
+    # Start the Flask web server
+    print("--- Dynamic Control Hub ---")
+    print("Starting Flask server at http://127.0.0.1:5000")
+    print("Open this URL in your browser.")
+    app.run(debug=True, port=5000)
+```
+
+
+-----
+
+
+### 2\. `templates/index.html` (The Frontend)
+
+
+You must create a new folder named `templates` in the same directory as `app.py`. Save this file *inside* that `templates` folder.
+
+
+```html
+@DOCTYPE html
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Control Hub</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #c0c0c0; cursor: not-allowed; }
+        #status-box { margin-top: 20px; padding: 15px; border-radius: 5px; }
+        .status-idle { background: #e9e9e9; }
+        .status-running { background: #e0f0ff; border: 1px solid #b3d7ff; }
+        .status-complete { background: #dfffe3; border: 1px solid #b3ffc1; }
+        .status-error { background: #ffeded; border: 1px solid #ffb3b3; }
+        #hunt-status { font-size: 24px; font-weight: bold; }
+        pre { background-color: #2b2b2b; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        ul { list-style-type: "📁 "; }
+    </style>
+</head>
+<body>
+
+
+    <div class="container">
+        <h1>Phase 4: Dynamic Control Hub</h1>
+        
+        <button id="start-hunt-btn" onclick="startHunt()">
+            Start New Hunt
+        </button>
+        
+        <hr style="margin: 25px 0;">
+
+
+        <h2>📊 Live Hunt Status</h2>
+        
+        <div id="status-box" class="status-idle">
+            <strong>Current Status:</strong>
+            <span id="hunt-status">Idle</span>
+        </div>
+
+
+        <h3>Found Artifacts</h3>
+        <ul id="artifact-list">
+            <li>(No artifacts found yet)</li>
+        </ul>
+
+
+        <h3>Final Result (from Provenance)</h3>
+        <pre id="final-result-json">
+{
+  "status": "Waiting for provenance.json..."
+}
+        </pre>
+    </div>
+
+
+    <script>
+        const startBtn = document.getElementById('start-hunt-btn');
+        const huntStatusEl = document.getElementById('hunt-status');
+        const statusBoxEl = document.getElementById('status-box');
+        const artifactListEl = document.getElementById('artifact-list');
+        const finalResultEl = document.getElementById('final-result-json');
+
+
+        /**
+         * Calls the backend to start a new hunt.
+         */
+        async function startHunt() {
+            startBtn.disabled = true;
+            startBtn.textContent = "Starting...";
+
+
+            try {
+                const response = await fetch('/start_hunt', { method: 'POST' });
+                const data = await response.json();
+
+
+                if (response.ok) {
+                    huntStatusEl.textContent = "Running";
+                    statusBoxEl.className = "status-running";
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    alert('Error: ' + data.message);
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+            } catch (error) {
+                alert('Failed to connect to server: ' + error);
+                startBtn.disabled = false;
+                startBtn.textContent = "Start New Hunt";
+            }
+        }
+
+
+        /**
+         * Polls the /status endpoint and updates the UI.
+         */
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) {
+                    console.error("Failed to fetch status.");
+                    return;
+                }
+                
+                const data = await response.json();
+
+
+                // 1. Update Status Badge
+                huntStatusEl.textContent = data.hunt_status;
+                statusBoxEl.className = `status-${data.hunt_status.toLowerCase()}`;
+
+
+                // 2. Update Artifacts List
+                if (data.found_files.length > 0) {
+                    artifactListEl.innerHTML = ''; // Clear list
+                    data.found_files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.textContent = file;
+                        artifactListEl.appendChild(li);
+                    });
+                } else {
+                    artifactListEl.innerHTML = '<li>(No artifacts found yet)</li>';
+                }
+
+
+                // 3. Update Final Result JSON
+                finalResultEl.textContent = JSON.stringify(data.final_result, null, 2);
+
+
+                // 4. Update Button State
+                if (data.hunt_status === "Running") {
+                    startBtn.disabled = true;
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+
+
+            } catch (error) {
+                console.error("Error during status update:", error);
+                huntStatusEl.textContent = "Connection Error";
+                statusBoxEl.className = "status-error";
+            }
+        }
+
+
+        // --- Start the polling interval ---
+        // Poll every 2 seconds (2000 milliseconds)
+        setInterval(updateStatus, 2000);
+        
+        // Also run once on page load
+        updateStatus();
+    </script>
+
+
+</body>
+</html>
+```
+
+
+-----
+
+
+### 3\. `create_mock_artifacts.py` (The Placeholder)
+
+
+Save this file in the **same directory** as `app.py`. This script simulates the work of your `adaptive_hunt_orchestrator.py` and `validation_pipeline.py` by creating the files the hub is looking for.
+
+
+```python
+## create_mock_artifacts.py
+#
+# This is a placeholder script to TEST the control hub.
+# It simulates a long-running simulation by:
+# 1. Waiting for 5 seconds.
+# 2. Creating a mock profiler CSV.
+# 3. Waiting for 5 more seconds.
+# 4. Creating the final "provenance.json" report.
+#
+import time
+import json
+import random
+import os
+
+
+# Clean up old files before we start
+print("[Mock] Cleaning up old artifacts...")
+for f in glob.glob("*_quantule_events.csv"):
+    os.remove(f)
+for f in glob.glob("provenance_*.json"):
+    os.remove(f)
+
+
+# --- 1. Simulate first part of the simulation ---
+print("[Mock] Simulation running... (Step 1/2)")
+time.sleep(5)
+
+
+# --- 2. Create the Quantule Profiler artifact ---
+run_id = f"mock_run_{random.randint(1000, 9999)}"
+profiler_filename = f"{run_id}_quantule_events.csv"
+print(f"[Mock] Creating artifact: {profiler_filename}")
+with open(profiler_filename, "w") as f:
+    f.write("event_type,timestamp,metric_value\n")
+    f.write("INIT,0.001,0\n")
+    f.write("QUANTULE_FLIP,5.123,8.45\n")
+    f.write("QUANTULE_FLIP,7.456,9.12\n")
+
+
+# --- 3. Simulate validation pipeline ---
+print("[Mock] Simulation running... (Step 2/2)")
+time.sleep(5)
+
+
+# --- 4. Create the final Provenance artifact ---
+provenance_filename = f"provenance_{run_id}.json"
+print(f"[Mock] Creating final artifact: {provenance_filename}")
+
+
+mock_results = {
+    "run_id": run_id,
+    "timestamp": time.time(),
+    "parameters": {
+        "param_D": 0.8,
+        "param_eta": 1.2,
+        "param_a_coupling": 0.5
+    },
+    "validation_status": "PASS: SSE-LOCK",
+    "metrics": {
+        "Calculated SSE": 0.087123,
+        "Phase Coherence Score (PCS)": 0.9981,
+        "Principled Localization Index (PLI)": 1.002,
+        "Informational Compressibility (IC)": 0.0015
+    }
+}
+
+
+with open(provenance_filename, "w") as f:
+    json.dump(mock_results, f, indent=2)
+
+
+print("[Mock] Hunt simulation complete.")
+```
+
+
+-----
+
+
+### 🚀 How to Run the Test
+
+
+Your directory structure should look like this:
+
+
+```
+/your_project_directory/
+    ├── app.py
+    ├── create_mock_artifacts.py
+    └── /templates/
+        └── index.html
+```
+
+
+**Instructions:**
+
+
+1.  **Install Flask:**
+
+
+    ```bash
+    pip install Flask
+    ```
+
+
+2.  **Run the Hub Server:**
+    Open your terminal, navigate to `/your_project_directory/`, and run:
+
+
+    ```bash
+    python3 app.py
+    ```
+
+
+3.  **Open the Hub:**
+    You will see output like this:
+
+
+    ```
+    [Watcher] Watcher thread started.
+    --- Dynamic Control Hub ---
+    Starting Flask server at http://127.0.0.1:5000
+    Open this URL in your browser.
+    ```
+
+
+    Open **`http://127.0.0.1:5000`** in your web browser.
+
+
+4.  **Test the Hub:**
+
+
+      * Click the **"Start New Hunt"** button.
+      * The button will disable, and the status will change to **"Running"**.
+      * In your terminal running `app.py`, you'll see the log output from `create_mock_artifacts.py`.
+      * Watch the "Found Artifacts" list in your browser. After 5 seconds, you'll see the `.csv` file appear.
+      * After 5 more seconds, the `provenance_....json` file will appear.
+      * The status will change to **"Complete"**, the "Final Result" box will fill with the JSON data, and the "Start New Hunt" button will re-enable.
+
+
+This gives you a fully functional, testable control hub. When you are ready to use your *real* simulation, you just need to edit `app.py` and change the `cmd` variable to point to `adaptive_hunt_orchestrator.py`\!
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Added Flask-based control hub with start-hunt and status APIs, state persistence, and a background watcher that tracks provenance and profiler artifacts for the Phase 4 Dynamic Control Hub.{line_range_start=1 line_range_end=155 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py#L1-L155"}
+* Created a stubbed execute_hunt implementation that simulates runs, logs to aste_hunt.log, and emits quantule and provenance artifacts for end-to-end testing.{line_range_start=1 line_range_end=65 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/core_engine.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/core_engine.py#L1-L65"}
+* Built a simple HTML dashboard to trigger hunts, display live status, list discovered artifacts, and render final provenance content via periodic polling.{line_range_start=1 line_range_end=115 path=advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html#L1-L115"}
+Testing
+* ✅ python -m compileall app.py core_engine.py templates/index.html
+Files (3)
+* diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d4c868b8cbeaf12439413257f32472d8076bfc06
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/app.py        
+@@ -0,0 +1,155 @@
++"""Flask-based control hub for Phase 4 Dynamic Control Hub.
++
++This server exposes lightweight endpoints to start hunts and query status
++while a background watcher monitors artifact outputs for completion signals.
++"""
++from __future__ import annotations
++
++import json
++import threading
++import time
++from pathlib import Path
++from typing import Dict, List
++
++from flask import Flask, jsonify, render_template, request
++
++import core_engine
++
++app = Flask(__name__)
++
++ARTIFACT_DIR = Path("provenance_reports")
++STATUS_FILE = Path("status.json")
++
++state_lock = threading.Lock()
++state: Dict[str, object] = {
++    "hunt_status": "Idle",
++    "found_files": [],
++    "final_result": {},
++    "message": "Waiting for hunt start.",
++}
++
++
++def _persist_status() -> None:
++    """Write the current state to ``status.json`` for external readers."""
++    with state_lock:
++        STATUS_FILE.write_text(json.dumps(state, indent=2))
++
++
++def _load_existing_status() -> None:
++    if STATUS_FILE.exists():
++        try:
++            loaded = json.loads(STATUS_FILE.read_text())
++        except json.JSONDecodeError:
++            return
++        with state_lock:
++            state.update(loaded)
++
++
++def _update_status(**kwargs: object) -> None:
++    with state_lock:
++        state.update(kwargs)
++    _persist_status()
++
++
++def _watch_for_artifacts() -> None:
++    """Continuously scan for provenance and profiler artifacts."""
++    ARTIFACT_DIR.mkdir(exist_ok=True)
++    known: set[Path] = set()
++    while True:
++        try:
++            provenance = sorted(ARTIFACT_DIR.glob("provenance_*.json"))
++            profiler = sorted(ARTIFACT_DIR.glob("*_quantule_events.csv"))
++            current_files = provenance + profiler
++
++            new_files: List[str] = []
++            for path in current_files:
++                if path not in known:
++                    known.add(path)
++                    new_files.append(str(path))
++
++            if new_files:
++                with state_lock:
++                    found: List[str] = state.get("found_files", [])  # type: ignore[assignment]
++                    found.extend(new_files)
++                    state["found_files"] = found
++                _persist_status()
++
++            if provenance:
++                target = provenance[-1]
++                try:
++                    content = json.loads(target.read_text())
++                    _update_status(
++                        hunt_status="Complete",
++                        final_result=content,
++                        message=f"Run completed with {target.name}",
++                    )
++                except json.JSONDecodeError:
++                    _update_status(
++                        hunt_status="Error",
++                        message=f"Failed to parse {target.name}",
++                    )
++            time.sleep(2)
++        except Exception as exc:  # pragma: no cover - defensive loop guard
++            _update_status(hunt_status="Error", message=str(exc))
++            time.sleep(5)
++
++
++def _start_watcher_thread() -> None:
++    watcher = threading.Thread(target=_watch_for_artifacts, daemon=True)
++    watcher.start()
++
++
++def _run_hunt_background(num_generations: int, population_size: int) -> None:
++    _update_status(
++        hunt_status="Running",
++        message="Hunt started.",
++        final_result={},
++        found_files=[],
++    )
++    try:
++        core_engine.execute_hunt(
++            num_generations=num_generations,
++            population_size=population_size,
++            artifact_dir=ARTIFACT_DIR,
++        )
++    except Exception as exc:  # pragma: no cover - runtime safety
++        _update_status(hunt_status="Error", message=str(exc))
++    else:
++        _update_status(message="Hunt execution finished, awaiting artifacts.")
++
++
++@app.route("/")
++def index() -> str:
++    return render_template("index.html")
++
++
++@app.route("/api/start-hunt", methods=["POST"])
++def start_hunt() -> tuple[object, int]:
++    payload = request.get_json(silent=True) or {}
++    num_generations = int(payload.get("num_generations", 5))
++    population_size = int(payload.get("population_size", 8))
++
++    with state_lock:
++        if state.get("hunt_status") == "Running":
++            return jsonify({"status": "error", "message": "Hunt already running."}), 400
++
++    thread = threading.Thread(
++        target=_run_hunt_background,
++        args=(num_generations, population_size),
++        daemon=True,
++    )
++    thread.start()
++    return jsonify({"status": "ok", "message": "Hunt started."}), 202
++
++
++@app.route("/api/get-status", methods=["GET"])
++def get_status() -> object:
++    with state_lock:
++        return jsonify(state)
++
++
++if __name__ == "__main__":
++    _load_existing_status()
++    _persist_status()
++    _start_watcher_thread()
++    app.run(debug=True, port=5000)
+diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/core_engine.py b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/core_engine.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..0db41b3364d3445a5219c10f043d86acba9b653f
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/core_engine.py        
+@@ -0,0 +1,65 @@
++"""Stubbed core engine that simulates a hunt and emits artifacts.
++
++The goal is to mirror the eventual adaptive_hunt_orchestrator entrypoint
++while remaining lightweight for local testing of the Dynamic Control Hub.
++"""
++from __future__ import annotations
++
++import json
++import logging
++import random
++import time
++from pathlib import Path
++
++LOG_FILE = Path("aste_hunt.log")
++
++
++logging.basicConfig(
++    level=logging.INFO,
++    format="%(asctime)s [%(levelname)s] %(message)s",
++    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler()],
++)
++logger = logging.getLogger(__name__)
++
++
++def execute_hunt(
++    *, num_generations: int, population_size: int, artifact_dir: Path
++) -> Path:
++    """Simulate a hunt run and emit profiler/provenance artifacts.
++
++    This function intentionally mirrors the planned callable signature for the
++    real engine. It performs a short, deterministic sequence so the web hub can
++    be exercised without requiring the full simulation stack.
++    """
++    artifact_dir.mkdir(exist_ok=True)
++    run_id = f"run_{int(time.time())}_{random.randint(1000, 9999)}"
++    logger.info(
++        "Starting simulated hunt | generations=%s population=%s run_id=%s",
++        num_generations,
++        population_size,
++        run_id,
++    )
++
++    time.sleep(2)
++    profiler_path = artifact_dir / f"{run_id}_quantule_events.csv"
++    profiler_path.write_text(
++        "event,timestamp,metric\n" "INIT,0.0,0.0\n" "STEP,1.0,0.42\n"
++    )
++    logger.info("Profiler artifact created at %s", profiler_path)
++
++    time.sleep(2)
++    provenance_path = artifact_dir / f"provenance_{run_id}.json"
++    provenance_payload = {
++        "run_id": run_id,
++        "num_generations": num_generations,
++        "population_size": population_size,
++        "validation_status": "PASS: SSE-LOCK",
++        "metrics": {
++            "Calculated SSE": round(random.random(), 6),
++            "Quantule Events": 3,
++        },
++    }
++    provenance_path.write_text(json.dumps(provenance_payload, indent=2))
++    logger.info("Provenance artifact created at %s", provenance_path)
++    logger.info("Simulated hunt completed.")
++    return provenance_path
+diff --git a/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..9e13d865b22c7b9479db3f9591b13713f12bc7a6
+--- /dev/null
++++ b/advanced validation suite/GIT_IRER_ECO_SYSTEM_DRAFTS/templates/index.html        
+@@ -0,0 +1,115 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++  <meta charset="UTF-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1.0">
++  <title>Dynamic Control Hub</title>
++  <style>
++    body { font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f6f8fb; margin: 0; padding: 20px; }
++    .card { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 8px 20px rgba(0,0,0,0.05); }
++    h1 { margin-top: 0; }
++    button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 12px 16px; font-size: 15px; cursor: pointer; }
++    button:disabled { background: #9ca3af; cursor: not-allowed; }
++    .status { padding: 12px; border-radius: 6px; margin: 12px 0; font-weight: bold; }
++    .status-idle { background: #e5e7eb; color: #1f2937; }
++    .status-running { background: #dbeafe; color: #1d4ed8; }
++    .status-complete { background: #dcfce7; color: #166534; }
++    .status-error { background: #fee2e2; color: #991b1b; }
++    pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; }
++    ul { padding-left: 20px; }
++  </style>
++</head>
++<body>
++  <div class="card">
++    <h1>Phase 4: Dynamic Control Hub</h1>
++    <p>Use this panel to trigger hunts and monitor artifacts emitted by the validation pipeline.</p>
++
++    <div style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center;">
++      <label for="generations">Generations</label>
++      <input id="generations" type="number" min="1" value="5" style="width: 80px;">
++      <label for="population">Population</label>
++      <input id="population" type="number" min="1" value="8" style="width: 80px;">
++      <button id="start-btn" onclick="startHunt()">Start Hunt</button>
++    </div>
++
++    <div id="status-banner" class="status status-idle">Idle</div>
++
++    <h3>Found Artifacts</h3>
++    <ul id="artifact-list"><li>None yet</li></ul>
++
++    <h3>Final Result (from provenance)</h3>
++    <pre id="final-result">{ "status": "Waiting for provenance_*.json" }</pre>
++  </div>
++
++  <script>
++    const startBtn = document.getElementById('start-btn');
++    const statusBanner = document.getElementById('status-banner');
++    const artifactList = document.getElementById('artifact-list');
++    const finalResult = document.getElementById('final-result');
++
++    async function startHunt() {
++      startBtn.disabled = true;
++      statusBanner.textContent = 'Starting...';
++      try {
++        const payload = {
++          num_generations: parseInt(document.getElementById('generations').value, 10),
++          population_size: parseInt(document.getElementById('population').value, 10)
++        };
++        const response = await fetch('/api/start-hunt', {
++          method: 'POST',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify(payload)
++        });
++        const data = await response.json();
++        if (!response.ok) {
++          alert(data.message || 'Unable to start hunt');
++          statusBanner.textContent = 'Idle';
++          statusBanner.className = 'status status-idle';
++          startBtn.disabled = false;
++          return;
++        }
++        statusBanner.textContent = 'Running';
++        statusBanner.className = 'status status-running';
++      } catch (err) {
++        console.error(err);
++        alert('Network error starting hunt');
++        statusBanner.textContent = 'Error';
++        statusBanner.className = 'status status-error';
++        startBtn.disabled = false;
++      }
++    }
++
++    async function refreshStatus() {
++      try {
++        const response = await fetch('/api/get-status');
++        if (!response.ok) return;
++        const data = await response.json();
++        statusBanner.textContent = data.hunt_status;
++        statusBanner.className = `status status-${data.hunt_status.toLowerCase()}`;
++
++        if (Array.isArray(data.found_files) && data.found_files.length) {
++          artifactList.innerHTML = '';
++          data.found_files.forEach((file) => {
++            const li = document.createElement('li');
++            li.textContent = file;
++            artifactList.appendChild(li);
++          });
++        } else {
++          artifactList.innerHTML = '<li>None yet</li>';
++        }
++
++        finalResult.textContent = JSON.stringify(data.final_result || {}, null, 2);
++
++        startBtn.disabled = data.hunt_status === 'Running';
++      } catch (err) {
++        console.error('Status polling error', err);
++        statusBanner.textContent = 'Error';
++        statusBanner.className = 'status status-error';
++      }
++    }
++
++    setInterval(refreshStatus, 2000);
++    refreshStatus();
++  </script>
++</body>
++</html>
+
+
+
+
+Tab 4
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**more context
+
+
+Here is the "Phase 4: Dynamic Control Hub" report.
+
+
+---
+
+
+## **Phase 4: Dynamic Control Hub (Build Plan)**
+
+
+**Project:** V11.0 "HPC-SDG" Suite
+**Mandate:** This report details the build plan for the web-based control plane, which replaces the manual CLI-driven process.
+**Pivot Citation:** Per our combined review, the "Celery/Dask" orchestration concept is officially decommissioned as non-viable. The following "Web-Based Control Plane" is the approved architecture.
+
+
+---
+
+
+## **Section 1: The Meta-Orchestrator (app.py)**
+
+
+This component, `app.py`, is the new, persistent center of the entire suite. It replaces the previous, manual `!python run.py hunt` execution model.
+
+
+* **Technology:** A lightweight Flask server.
+* **Role 1: Signaler (Meta-Orchestrator)**
+    * This server will provide the primary API for managing the simulation suite.
+    * It will expose key endpoints for the web-based hub, including:
+        * `POST /api/start-hunt`: Triggers the execution of a new simulation hunt (see Section 2).
+        * `GET /api/get-status`: Provides the current state of the simulation and analysis (see Section 3).
+        * `GET /`: Serves the `index.html` control hub.
+* **Role 2: Watcher (Layer 2 Orchestrator)**
+    * Upon startup, `app.py` will launch a simple, non-blocking background thread (using Python's `threading` library).
+    * This "Watcher" thread will continuously monitor the `provenance_reports` directory for new `provenance.json` files.
+    * When a new file is detected, the Watcher will automatically spawn a subprocess to trigger the "Layer 2" analysis pipeline (e.g., TDA, BSSN-check, plotting scripts).
+    * Upon completion of this analysis, the Watcher will update a central `status.json` file with key results, metrics, and new plot filepaths.
+
+
+---
+
+
+## **Section 2: The Core Engine (Refactor)**
+
+
+This section details the refactor of the existing `adaptive_hunt_orchestrator.py` from a standalone script into a callable Python module.
+
+
+* **Conversion to Module:** The file will be refactored to be importable (e.g., `import core_engine`).
+* **Callable Function:** The `main()` function and argument parsing logic will be refactored into a single, callable function:
+    * `def execute_hunt(num_generations: int, population_size: int):`
+* **Logging:** All `print()` statements will be removed and replaced with Python's `logging` module. All logs will be directed to a dedicated `aste_hunt.log` file for persistent, machine-readable records.
+* **The New Call Chain:**
+    1.  The Flask server (`app.py`) receives a request at the `/api/start-hunt` endpoint.
+    2.  The endpoint function imports the refactored module (`from core_engine import execute_hunt`).
+    3.  It spawns a **new background thread** and calls `execute_hunt()` within it, passing the parameters from the API request.
+    4.  This architecture explicitly prevents the "Core Engine" (the hot, JAX-based Layer 1) from blocking or freezing the web server.
+
+
+---
+
+
+## **Section 3: The Interactive Hub (HTML)**
+
+
+The `app.py` server will serve a single `index.html` file, which will act as the unified control and visualization hub. This design achieves the "hot/cold" decoupling goal.
+
+
+* **Layer 1 Control (The "Hot" Layer):**
+    * The HTML file will feature a "Start Hunt" button within a simple form (to specify generations, population, etc.).
+    * Clicking this button will send a `POST` request to the `/api/start-hunt` endpoint on the `app.py` server.
+    * This is the *only* interaction the hub has with the "hot" JAX core. The hub *triggers* the hunt but does not "talk" to it directly.
+* **Layer 2 Visualization (The "Cold" Layer):**
+    * The HTML file will feature a "Live Status" dashboard.
+    * This dashboard will use JavaScript to periodically (e.g., every 5 seconds) send a `GET` request to the `/api/get-status` endpoint.
+    * This endpoint will simply read and return the `status.json` file that the "Watcher" thread (Section 1) maintains.
+    * The dashboard will then parse this JSON to update statistics (e.g., "Best SSE so far"), display plots, and report the current status, achieving live visualization without any performance-intensive coupling to the simulation itself.
+
+
+---
+
+
+## **Section 4: The Scalability Path (Colab to Cloud VM)**
+
+
+This architecture is designed for a seamless transition from a local "lab" environment to a distributed, high-performance cloud deployment.
+
+
+* **Phase A: Colab (Lab Environment)**
+    * You run `!python app.py`.
+    * This single command initiates one Python process.
+    * This process runs:
+        1.  The Flask web server.
+        2.  The "Watcher" background thread.
+        3.  The "Core Engine" (`execute_hunt`) in a third thread.
+    * This creates a fully-contained, testable, end-to-end environment for development and debugging.
+* **Phase B: Cloud VM (Distributed Production)**
+    * The architecture is distributed, not changed.
+    * **Control VM:** A lightweight, public-facing VM (e.g., a 2-core cloud instance) runs the `app.py` process. This VM hosts the web hub and API.
+    * **HPC/JAX VMs:** One or more dedicated, high-power JAX VMs are provisioned for the computation.
+    * **Refactor:** The `execute_hunt()` function on the "Control VM" is modified. Instead of importing and running `worker_sncgl_sdg.py` locally, it now uses `ssh` (or a cloud-native API) to remotely execute that worker script on the dedicated JAX VMs, passing the necessary parameters.
+    * This maintains the decoupled architecture while scaling compute power horizontally. The Control Hub remains the lightweight, central "brain" of the operation.
+
+
+**more context
+
+
+brief examples of responses'
+Hello! Those are excellent clarifying questions. Getting these details right will be key to building a robust Phase 4 control hub.
+Here are my confirmations on those points:
+Authoritative Plan: Yes, please treat the build plan we discussed for the Dynamic Control Hub as authoritative. Its primary goal is to integrate with and control the existing, hardened components (like the adaptive_hunt_orchestrator.py, validation_pipeline.py, and aste_hunter) that we've already built and verified in files like END_TO~2.IPY and e_validation_pipeline_pyv9.ipynb.
+I don't have access to "Bridging Simulation to Reality.zip," so I'm unaware of any constraints from it. For our purposes, we'll build the hub to interface with the established simulation pipeline. If that zip file introduces new requirements, just let me know, and we can adapt the plan.
+Code Stubs: Yes, I will absolutely provide code stubs for app.py, execute_hunt(), and index.html. This is the best way to show the system design in practice and give you a complete, working foundation that you can copy, paste, and build upon directly.
+Watcher Logic: For the initial version, the watcher logic should focus on the key artifacts that signal the result of a simulation run, rather than just the scripts. Based on our validation_pipeline.py (from e_validation_pipeline_pyv9.ipynb), the most critical files to watch for are:
+provenance_*.json: This is the most important file. It contains the final validation status (FAIL: NO-LOCK, PASS: SSE-LOCK, etc.) and the final metrics like Calculated SSE. This file signals that a run is complete and validated.
+*_quantule_events.csv: This file contains the profiler metrics. Watching for this confirms that the Quantule Profiler component ran successfully.
+By watching for these output files instead of the scripts, our control hub will be reacting to the actual results of the pipeline, which is a much more robust design. We can start with these two, as they are the core outputs of the validation phase.
+Please let me know if you have any more questions before we start designing the code!
+
+
+**and 
+
+
+This is a fantastic step\! Let's build the complete, runnable code for the **Dynamic Control Hub**.
+
+
+This solution is broken into three files that work together:
+
+
+1.  `app.py`: The Python **Flask server** that acts as the backend. It starts the hunt, watches for files, and serves status updates.
+2.  `index.html`: The HTML/JavaScript **frontend** you'll view in your browser. It provides the "Start Hunt" button and the live-updating dashboard.
+3.  `create_mock_artifacts.py`: A **placeholder script** that *simulates* a simulation run. It creates the a `...quantule_events.csv` and a `provenance_...json` file with a delay, allowing us to test the hub's watcher logic without running a real, multi-hour simulation.
+
+
+Here is the complete code and the instructions to run it.
+
+
+-----
+
+
+### 1\. `app.py` (The Flask Backend)
+
+
+This is the main control hub server. It's responsible for starting the simulation (in a separate thread) and providing a `/status` endpoint that the frontend can check for live updates.
+
+
+```python
+## app.py
+#
+# The backend for the Phase 4: Dynamic Control Hub.
+# This server launches simulation hunts and watches for the resulting artifacts.
+#
+# Dependencies:
+# pip install Flask
+#
+import os
+import subprocess
+import threading
+import time
+import glob
+import json
+from flask import Flask, render_template, jsonify, request
+
+
+# --- Shared Global State ---
+# We use global variables and a lock to safely share status
+# between the web request threads and the background hunter thread.
+#
+# DO NOT access these directly without acquiring the `state_lock`!
+state_lock = threading.Lock()
+hunt_status = "Idle" # "Idle", "Running", "Complete", "Error"
+hunt_process = None # Will hold the subprocess.Popen object
+found_files = []      # List of artifacts we've found
+final_result = {}       # The parsed content of the final provenance.json
+# ---------------------------
+
+
+app = Flask(__name__)
+
+
+def execute_hunt_thread():
+    """
+    This function runs in a separate thread.
+    It executes the simulation orchestrator and sets the final status.
+    """
+    global hunt_status, hunt_process, found_files, final_result
+    
+    # 1. --- Set status to "Running" ---
+    with state_lock:
+        hunt_status = "Running"
+        found_files = []
+        final_result = {}
+
+
+    print("[Hub] Starting new hunt...")
+
+
+    # 2. --- Launch the subprocess ---
+    #
+    # IMPORTANT: For this test, we are calling our MOCK script.
+    # To run your REAL simulation, change this command to:
+    # ['python3', 'adaptive_hunt_orchestrator.py']
+    #
+    try:
+        # We use the placeholder to test the hub
+        cmd = ['python3', 'create_mock_artifacts.py'] 
+        
+        # In a real scenario, you'd call the orchestrator:
+        # cmd = ['python3', 'adaptive_hunt_orchestrator.py'] 
+
+
+        # Popen is non-blocking
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with state_lock:
+            hunt_process = process
+
+
+        # 3. --- Wait for the process to complete ---
+        # We get the output/error to report if something goes wrong
+        stdout, stderr = process.communicate()
+        return_code = process.returncode
+
+
+        with state_lock:
+            if return_code != 0:
+                print(f"[Hub] Hunt process failed with code {return_code}.")
+                print(f"[Hub] STDERR: {stderr}")
+                hunt_status = "Error"
+                final_result = {"error": "Hunt process failed.", "details": stderr}
+            else:
+                print("[Hub] Hunt process completed successfully.")
+                # The watcher thread will set the status to "Complete"
+                # when it finds the provenance.json file.
+                # If the process finishes but no file is found,
+                # the watcher will eventually time out (or we can add a timeout).
+                pass
+
+
+    except Exception as e:
+        with state_lock:
+            print(f"[Hub] Exception during hunt execution: {e}")
+            hunt_status = "Error"
+            final_result = {"error": str(e)}
+    finally:
+        with state_lock:
+            hunt_process = None
+
+
+def watch_for_artifacts_thread():
+    """
+    This function runs in a separate, continuous background thread.
+    It scans the directory for our target artifacts and updates the global state.
+    """
+    global hunt_status, found_files, final_result
+    print("[Watcher] Watcher thread started.")
+    
+    while True:
+        try:
+            # We only watch if a hunt is "Running"
+            with state_lock:
+                current_status = hunt_status
+            
+            if current_status == "Running":
+                # --- Check for Profiler Artifact ---
+                profiler_files = glob.glob("*_quantule_events.csv")
+                
+                # --- Check for Final Provenance Artifact ---
+                provenance_files = glob.glob("provenance_*.json")
+
+
+                with state_lock:
+                    # Add any new files to our list
+                    all_artifacts = set(profiler_files + provenance_files)
+                    for f in all_artifacts:
+                        if f not in found_files:
+                            print(f"[Watcher] Found new artifact: {f}")
+                            found_files.append(f)
+                    
+                    # --- If we find the final report, the hunt is Complete ---
+                    if provenance_files:
+                        print(f"[Watcher] Found provenance file: {provenance_files[0]}")
+                        try:
+                            # Read the file
+                            with open(provenance_files[0], 'r') as f:
+                                data = json.load(f)
+                            
+                            # Update global state
+                            hunt_status = "Complete"
+                            final_result = data
+                            print(f"[Watcher] Hunt marked as Complete.")
+                        
+                        except Exception as e:
+                            print(f"[Watcher] Error parsing JSON from {provenance_files[0]}: {e}")
+                            hunt_status = "Error"
+                            final_result = {"error": f"Failed to parse {provenance_files[0]}"}
+            
+            # Sleep for a few seconds before checking again
+            time.sleep(2)
+            
+        except Exception as e:
+            # Don't let the watcher thread die
+            print(f"[Watcher] Error in watcher loop: {e}")
+            time.sleep(5)
+
+
+
+
+# --- Flask HTTP Routes ---
+
+
+@app.route('/')
+def index():
+    """Serves the main HTML dashboard."""
+    # The 'index.html' file must be in a folder named 'templates'
+    # in the same directory as this app.py file.
+    return render_template('index.html')
+
+
+@app.route('/start_hunt', methods=['POST'])
+def start_hunt():
+    """
+    API endpoint to start a new hunt.
+    It's triggered by the "Start New Hunt" button.
+    """
+    global hunt_status
+    
+    with state_lock:
+        if hunt_status == "Running":
+            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
+        
+        # Start the hunt in a new thread
+        hunt_thread = threading.Thread(target=execute_hunt_thread, daemon=True)
+        hunt_thread.start()
+        
+    return jsonify({"status": "success", "message": "Hunt started."})
+
+
+@app.route('/status')
+def get_status():
+    """
+    API endpoint for the frontend to poll.
+    Returns the current shared state as JSON.
+    """
+    with state_lock:
+        # Return a copy of the state
+        status_data = {
+            "hunt_status": hunt_status,
+            "found_files": list(found_files),
+            "final_result": final_result
+        }
+    return jsonify(status_data)
+
+
+# --- Main Entry Point ---
+
+
+if __name__ == '__main__':
+    # Start the background watcher thread
+    watcher = threading.Thread(target=watch_for_artifacts_thread, daemon=True)
+    watcher.start()
+    
+    # Start the Flask web server
+    print("--- Dynamic Control Hub ---")
+    print("Starting Flask server at http://127.0.0.1:5000")
+    print("Open this URL in your browser.")
+    app.run(debug=True, port=5000)
+```
+
+
+-----
+
+
+### 2\. `templates/index.html` (The Frontend)
+
+
+You must create a new folder named `templates` in the same directory as `app.py`. Save this file *inside* that `templates` folder.
+
+
+```html
+@DOCTYPE html
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dynamic Control Hub</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        button { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; font-size: 16px; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #c0c0c0; cursor: not-allowed; }
+        #status-box { margin-top: 20px; padding: 15px; border-radius: 5px; }
+        .status-idle { background: #e9e9e9; }
+        .status-running { background: #e0f0ff; border: 1px solid #b3d7ff; }
+        .status-complete { background: #dfffe3; border: 1px solid #b3ffc1; }
+        .status-error { background: #ffeded; border: 1px solid #ffb3b3; }
+        #hunt-status { font-size: 24px; font-weight: bold; }
+        pre { background-color: #2b2b2b; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        ul { list-style-type: "📁 "; }
+    </style>
+</head>
+<body>
+
+
+    <div class="container">
+        <h1>Phase 4: Dynamic Control Hub</h1>
+        
+        <button id="start-hunt-btn" onclick="startHunt()">
+            Start New Hunt
+        </button>
+        
+        <hr style="margin: 25px 0;">
+
+
+        <h2>📊 Live Hunt Status</h2>
+        
+        <div id="status-box" class="status-idle">
+            <strong>Current Status:</strong>
+            <span id="hunt-status">Idle</span>
+        </div>
+
+
+        <h3>Found Artifacts</h3>
+        <ul id="artifact-list">
+            <li>(No artifacts found yet)</li>
+        </ul>
+
+
+        <h3>Final Result (from Provenance)</h3>
+        <pre id="final-result-json">
+{
+  "status": "Waiting for provenance.json..."
+}
+        </pre>
+    </div>
+
+
+    <script>
+        const startBtn = document.getElementById('start-hunt-btn');
+        const huntStatusEl = document.getElementById('hunt-status');
+        const statusBoxEl = document.getElementById('status-box');
+        const artifactListEl = document.getElementById('artifact-list');
+        const finalResultEl = document.getElementById('final-result-json');
+
+
+        /**
+         * Calls the backend to start a new hunt.
+         */
+        async function startHunt() {
+            startBtn.disabled = true;
+            startBtn.textContent = "Starting...";
+
+
+            try {
+                const response = await fetch('/start_hunt', { method: 'POST' });
+                const data = await response.json();
+
+
+                if (response.ok) {
+                    huntStatusEl.textContent = "Running";
+                    statusBoxEl.className = "status-running";
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    alert('Error: ' + data.message);
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+            } catch (error) {
+                alert('Failed to connect to server: ' + error);
+                startBtn.disabled = false;
+                startBtn.textContent = "Start New Hunt";
+            }
+        }
+
+
+        /**
+         * Polls the /status endpoint and updates the UI.
+         */
+        async function updateStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) {
+                    console.error("Failed to fetch status.");
+                    return;
+                }
+                
+                const data = await response.json();
+
+
+                // 1. Update Status Badge
+                huntStatusEl.textContent = data.hunt_status;
+                statusBoxEl.className = `status-${data.hunt_status.toLowerCase()}`;
+
+
+                // 2. Update Artifacts List
+                if (data.found_files.length > 0) {
+                    artifactListEl.innerHTML = ''; // Clear list
+                    data.found_files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.textContent = file;
+                        artifactListEl.appendChild(li);
+                    });
+                } else {
+                    artifactListEl.innerHTML = '<li>(No artifacts found yet)</li>';
+                }
+
+
+                // 3. Update Final Result JSON
+                finalResultEl.textContent = JSON.stringify(data.final_result, null, 2);
+
+
+                // 4. Update Button State
+                if (data.hunt_status === "Running") {
+                    startBtn.disabled = true;
+                    startBtn.textContent = "Hunt is Running...";
+                } else {
+                    startBtn.disabled = false;
+                    startBtn.textContent = "Start New Hunt";
+                }
+
+
+            } catch (error) {
+                console.error("Error during status update:", error);
+                huntStatusEl.textContent = "Connection Error";
+                statusBoxEl.className = "status-error";
+            }
+        }
+
+
+        // --- Start the polling interval ---
+        // Poll every 2 seconds (2000 milliseconds)
+        setInterval(updateStatus, 2000);
+        
+        // Also run once on page load
+        updateStatus();
+    </script>
+
+
+</body>
+</html>
+```
+
+
+-----
+
+
+### 3\. `create_mock_artifacts.py` (The Placeholder)
+
+
+Save this file in the **same directory** as `app.py`. This script simulates the work of your `adaptive_hunt_orchestrator.py` and `validation_pipeline.py` by creating the files the hub is looking for.
+
+
+```python
+## create_mock_artifacts.py
+#
+# This is a placeholder script to TEST the control hub.
+# It simulates a long-running simulation by:
+# 1. Waiting for 5 seconds.
+# 2. Creating a mock profiler CSV.
+# 3. Waiting for 5 more seconds.
+# 4. Creating the final "provenance.json" report.
+#
+import time
+import json
+import random
+import os
+
+
+# Clean up old files before we start
+print("[Mock] Cleaning up old artifacts...")
+for f in glob.glob("*_quantule_events.csv"):
+    os.remove(f)
+for f in glob.glob("provenance_*.json"):
+    os.remove(f)
+
+
+# --- 1. Simulate first part of the simulation ---
+print("[Mock] Simulation running... (Step 1/2)")
+time.sleep(5)
+
+
+# --- 2. Create the Quantule Profiler artifact ---
+run_id = f"mock_run_{random.randint(1000, 9999)}"
+profiler_filename = f"{run_id}_quantule_events.csv"
+print(f"[Mock] Creating artifact: {profiler_filename}")
+with open(profiler_filename, "w") as f:
+    f.write("event_type,timestamp,metric_value\n")
+    f.write("INIT,0.001,0\n")
+    f.write("QUANTULE_FLIP,5.123,8.45\n")
+    f.write("QUANTULE_FLIP,7.456,9.12\n")
+
+
+# --- 3. Simulate validation pipeline ---
+print("[Mock] Simulation running... (Step 2/2)")
+time.sleep(5)
+
+
+# --- 4. Create the final Provenance artifact ---
+provenance_filename = f"provenance_{run_id}.json"
+print(f"[Mock] Creating final artifact: {provenance_filename}")
+
+
+mock_results = {
+    "run_id": run_id,
+    "timestamp": time.time(),
+    "parameters": {
+        "param_D": 0.8,
+        "param_eta": 1.2,
+        "param_a_coupling": 0.5
+    },
+    "validation_status": "PASS: SSE-LOCK",
+    "metrics": {
+        "Calculated SSE": 0.087123,
+        "Phase Coherence Score (PCS)": 0.9981,
+        "Principled Localization Index (PLI)": 1.002,
+        "Informational Compressibility (IC)": 0.0015
+    }
+}
+
+
+with open(provenance_filename, "w") as f:
+    json.dump(mock_results, f, indent=2)
+
+
+print("[Mock] Hunt simulation complete.")
+```
+
+
+-----
+
+
+### 🚀 How to Run the Test
+
+
+Your directory structure should look like this:
+
+
+```
+/your_project_directory/
+    ├── app.py
+    ├── create_mock_artifacts.py
+    └── /templates/
+        └── index.html
+```
+
+
+**Instructions:**
+
+
+1.  **Install Flask:**
+
+
+    ```bash
+    pip install Flask
+    ```
+
+
+2.  **Run the Hub Server:**
+    Open your terminal, navigate to `/your_project_directory/`, and run:
+
+
+    ```bash
+    python3 app.py
+    ```
+
+
+3.  **Open the Hub:**
+    You will see output like this:
+
+
+    ```
+    [Watcher] Watcher thread started.
+    --- Dynamic Control Hub ---
+    Starting Flask server at http://127.0.0.1:5000
+    Open this URL in your browser.
+    ```
+
+
+    Open **`http://127.0.0.1:5000`** in your web browser.
+
+
+4.  **Test the Hub:**
+
+
+      * Click the **"Start New Hunt"** button.
+      * The button will disable, and the status will change to **"Running"**.
+      * In your terminal running `app.py`, you'll see the log output from `create_mock_artifacts.py`.
+      * Watch the "Found Artifacts" list in your browser. After 5 seconds, you'll see the `.csv` file appear.
+      * After 5 more seconds, the `provenance_....json` file will appear.
+      * The status will change to **"Complete"**, the "Final Result" box will fill with the JSON data, and the "Start New Hunt" button will re-enable.
+
+
+This gives you a fully functional, testable control hub. When you are ready to use your *real* simulation, you just need to edit `app.py` and change the `cmd` variable to point to `adaptive_hunt_orchestrator.py`\!
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Built a Flask-based Dynamic Control Hub with background watcher, status file updates, and REST endpoints for launching hunts and reporting live state updates. {line_range_start=1 line_range_end=150 path=advanced validation suite/app.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/app.py#L1-L150"}
+* Added a core_engine.execute_hunt wrapper that prepares environment settings and dispatches the mock (or real) orchestrator without blocking the server thread. {line_range_start=1 line_range_end=52 path=advanced validation suite/core_engine.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/core_engine.py#L1-L52"}
+* Created a mock artifact generator and a responsive dashboard to simulate hunts, surface discovered artifacts, and display provenance results in real time. {line_range_start=1 line_range_end=66 path=advanced validation suite/create_mock_artifacts.py git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/create_mock_artifacts.py#L1-L66"}{line_range_start=1 line_range_end=144 path=advanced validation suite/templates/index.html git_url="https://github.com/Jake36999/IRER_Validation_suite_drafts/blob/main/advanced validation suite/templates/index.html#L1-L144"}
+Testing
+* ✅ python -m compileall app.py core_engine.py create_mock_artifacts.py 
+Files (4)
+* diff --git a/advanced validation suite/app.py b/advanced validation suite/app.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..595970ee81b8007107da3d702928c32ff55dd69e
+--- /dev/null
++++ b/advanced validation suite/app.py        
+@@ -0,0 +1,150 @@
++"""Dynamic Control Hub Flask application.
++
++This server triggers hunts, watches for key artifacts, and exposes
++status updates for the frontend dashboard.
++"""
++from __future__ import annotations
++
++import json
++import logging
++import os
++import threading
++import time
++from pathlib import Path
++from typing import Any, Dict, List
++
++from flask import Flask, jsonify, render_template, request
++
++import core_engine
++
++# Configuration
++ARTIFACT_ROOT = Path(os.environ.get("HUB_ARTIFACT_DIR", "provenance_reports")).resolve()
++STATUS_FILE = ARTIFACT_ROOT / "status.json"
++POLL_INTERVAL_SECONDS = 2
++
++ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
++
++logging.basicConfig(
++    level=logging.INFO,
++    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
++    handlers=[
++        logging.FileHandler(ARTIFACT_ROOT / "control_hub.log"),
++        logging.StreamHandler(),
++    ],
++)
++LOGGER = logging.getLogger("control_hub")
++
++app = Flask(__name__)
++
++
++def default_status() -> Dict[str, Any]:
++    return {
++        "hunt_status": "Idle",
++        "found_files": [],
++        "final_result": {},
++        "last_updated": time.time(),
++    }
++
++
++state_lock = threading.Lock()
++state: Dict[str, Any] = default_status()
++
++
++def write_status_file() -> None:
++    with state_lock:
++        payload = state.copy()
++    STATUS_FILE.write_text(json.dumps(payload, indent=2))
++
++
++def update_state(**updates: Any) -> None:
++    with state_lock:
++        state.update(updates)
++        state["last_updated"] = time.time()
++    write_status_file()
++
++
++def execute_hunt_background(params: Dict[str, Any]) -> None:
++    update_state(hunt_status="Running", found_files=[], final_result={})
++    try:
++        LOGGER.info("Starting hunt with params: %s", params)
++        core_engine.execute_hunt(
++            artifact_root=ARTIFACT_ROOT,
++            num_generations=params.get("num_generations"),
++            population_size=params.get("population_size"),
++        )
++        LOGGER.info("Hunt execution request completed.")
++    except Exception as exc:  # pylint: disable=broad-except
++        LOGGER.exception("Hunt failed")
++        update_state(hunt_status="Error", final_result={"error": str(exc)})
++    else:
++        # watcher thread will mark completion when provenance arrives
++        pass
++
++
++def watch_for_artifacts() -> None:
++    LOGGER.info("Watcher thread started. Monitoring %s", ARTIFACT_ROOT)
++    while True:
++        try:
++            with state_lock:
++                status_snapshot = state.get("hunt_status", "Idle")
++            if status_snapshot == "Running":
++                provenance_files: List[Path] = sorted(ARTIFACT_ROOT.glob("provenance_*.json"))
++                quantule_files: List[Path] = sorted(ARTIFACT_ROOT.glob("*_quantule_events.csv"))
++
++                discovered = {str(f.name) for f in provenance_files + quantule_files}
++                with state_lock:
++                    known = set(state.get("found_files", []))
++                new_files = sorted(discovered - known)
++                if new_files:
++                    LOGGER.info("New artifacts detected: %s", new_files)
++                    update_state(found_files=sorted(discovered))
++
++                if provenance_files:
++                    latest = provenance_files[-1]
++                    try:
++                        data = json.loads(latest.read_text())
++                        LOGGER.info("Provenance file detected: %s", latest)
++                        update_state(hunt_status="Complete", final_result=data)
++                    except Exception as exc:  # pylint: disable=broad-except
++                        LOGGER.exception("Failed to parse %s", latest)
++                        update_state(
++                            hunt_status="Error",
++                            final_result={"error": f"Failed to parse {latest.name}: {exc}"},
++                        )
++            time.sleep(POLL_INTERVAL_SECONDS)
++        except Exception as exc:  # pylint: disable=broad-except
++            LOGGER.exception("Watcher encountered an error: %s", exc)
++            time.sleep(POLL_INTERVAL_SECONDS)
++
++
++@app.route("/")
++def index() -> Any:
++    return render_template("index.html")
++
++
++@app.route("/api/start-hunt", methods=["POST"])
++def start_hunt() -> Any:
++    with state_lock:
++        if state.get("hunt_status") == "Running":
++            return jsonify({"status": "error", "message": "A hunt is already running."}), 400
++
++    payload = request.get_json(silent=True) or {}
++    hunt_thread = threading.Thread(target=execute_hunt_background, args=(payload,), daemon=True)
++    hunt_thread.start()
++    LOGGER.info("Hunt thread launched.")
++    return jsonify({"status": "success"})
++
++
++@app.route("/api/get-status")
++def get_status() -> Any:
++    with state_lock:
++        snapshot = state.copy()
++    return jsonify(snapshot)
++
++
++if __name__ == "__main__":
++    watcher_thread = threading.Thread(target=watch_for_artifacts, daemon=True)
++    watcher_thread.start()
++    LOGGER.info("Dynamic Control Hub starting on http://127.0.0.1:5000")
++    write_status_file()
++    app.run(host="0.0.0.0", port=5000, debug=True)
+diff --git a/advanced validation suite/core_engine.py b/advanced validation suite/core_engine.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..d1ffd71b13ca970f0a457290340e5f1e19626f91
+--- /dev/null
++++ b/advanced validation suite/core_engine.py        
+@@ -0,0 +1,52 @@
++"""Core engine wrapper that exposes execute_hunt for the control hub.
++
++The function intentionally delegates to the existing hunt orchestrator or a
++mock artifact generator so the Flask app does not block.
++"""
++from __future__ import annotations
++
++import logging
++import os
++import subprocess
++import sys
++from pathlib import Path
++from typing import Optional
++
++LOGGER = logging.getLogger(__name__)
++
++DEFAULT_GENERATIONS = 10
++DEFAULT_POPULATION = 25
++
++
++def execute_hunt(
++    *,
++    artifact_root: Path,
++    num_generations: Optional[int] = None,
++    population_size: Optional[int] = None,
++) -> None:
++    """Run the adaptive hunt orchestrator.
++
++    Parameters default to modest values so the control hub remains responsive
++    even when invoked without explicit input.
++    """
++
++    artifact_root.mkdir(parents=True, exist_ok=True)
++
++    generations = num_generations or DEFAULT_GENERATIONS
++    population = population_size or DEFAULT_POPULATION
++
++    env = os.environ.copy()
++    env["HUB_ARTIFACT_DIR"] = str(artifact_root)
++    env["HUNT_GENERATIONS"] = str(generations)
++    env["HUNT_POPULATION"] = str(population)
++
++    # For now we call the mock artifact generator. Swap this command for the
++    # hardened orchestrator (e.g., adaptive_hunt_orchestrator.py) when ready.
++    cmd = [sys.executable, "create_mock_artifacts.py"]
++
++    LOGGER.info("Executing hunt via command: %s", " ".join(cmd))
++    result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
++    if result.stdout:
++        LOGGER.info("Hunt stdout:\n%s", result.stdout)
++    if result.stderr:
++        LOGGER.warning("Hunt stderr:\n%s", result.stderr)
+diff --git a/advanced validation suite/create_mock_artifacts.py b/advanced validation suite/create_mock_artifacts.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..466b84026ce5c80725d10854b57e82504b39c585
+--- /dev/null
++++ b/advanced validation suite/create_mock_artifacts.py        
+@@ -0,0 +1,66 @@
++"""Simulate a hunt run by emitting artifacts the control hub watches for."""
++from __future__ import annotations
++
++import json
++import os
++import random
++import time
++from pathlib import Path
++
++import pandas as pd
++
++ARTIFACT_ROOT = Path(os.environ.get("HUB_ARTIFACT_DIR", "provenance_reports")).resolve()
++ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
++
++
++def clean_old_artifacts() -> None:
++    for pattern in ("*_quantule_events.csv", "provenance_*.json"):
++        for path in ARTIFACT_ROOT.glob(pattern):
++            path.unlink()
++
++
++def write_profiler(run_id: str) -> Path:
++    filename = ARTIFACT_ROOT / f"{run_id}_quantule_events.csv"
++    frame = pd.DataFrame(
++        [
++            {"event_type": "INIT", "timestamp": 0.001, "metric_value": 0},
++            {"event_type": "QUANTULE_FLIP", "timestamp": 5.123, "metric_value": 8.45},
++            {"event_type": "QUANTULE_FLIP", "timestamp": 7.456, "metric_value": 9.12},
++        ]
++    )
++    frame.to_csv(filename, index=False)
++    return filename
++
++
++def write_provenance(run_id: str) -> Path:
++    filename = ARTIFACT_ROOT / f"provenance_{run_id}.json"
++    payload = {
++        "run_id": run_id,
++        "timestamp": time.time(),
++        "validation_status": "PASS: SSE-LOCK",
++        "metrics": {
++            "Calculated SSE": 0.087123,
++            "Phase Coherence Score (PCS)": 0.9981,
++            "Principled Localization Index (PLI)": 1.002,
++            "Informational Compressibility (IC)": 0.0015,
++        },
++    }
++    filename.write_text(json.dumps(payload, indent=2))
++    return filename
++
++
++def main() -> None:
++    clean_old_artifacts()
++
++    run_id = f"mock_run_{random.randint(1000, 9999)}"
++    print(f"[Mock] starting simulated hunt {run_id} -> {ARTIFACT_ROOT}")
++    time.sleep(2)
++    profiler_file = write_profiler(run_id)
++    print(f"[Mock] wrote profiler artifact {profiler_file}")
++    time.sleep(2)
++    provenance_file = write_provenance(run_id)
++    print(f"[Mock] wrote provenance artifact {provenance_file}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/advanced validation suite/templates/index.html b/advanced validation suite/templates/index.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..9069acaeec22e19a54ed06b80c07d9672182694f
+--- /dev/null
++++ b/advanced validation suite/templates/index.html        
+@@ -0,0 +1,144 @@
++<!DOCTYPE html>
++<html lang="en">
++<head>
++  <meta charset="UTF-8">
++  <meta name="viewport" content="width=device-width, initial-scale=1.0">
++  <title>Phase 4 Dynamic Control Hub</title>
++  <style>
++    :root {
++      font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
++      background: #f6f8fb;
++      color: #111827;
++    }
++    body { margin: 0; padding: 24px; }
++    .card {
++      max-width: 960px;
++      margin: 0 auto;
++      background: #fff;
++      border: 1px solid #e5e7eb;
++      border-radius: 12px;
++      padding: 24px;
++      box-shadow: 0 12px 30px rgba(0,0,0,0.04);
++    }
++    h1 { margin-top: 0; }
++    label { display: block; font-weight: 600; margin-top: 12px; }
++    input { width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #d1d5db; border-radius: 8px; }
++    button {
++      margin-top: 16px;
++      background: #2563eb;
++      color: #fff;
++      padding: 12px 18px;
++      border: none;
++      border-radius: 10px;
++      cursor: pointer;
++      font-weight: 700;
++      transition: background 0.15s ease;
++    }
++    button:disabled { background: #9ca3af; cursor: not-allowed; }
++    button:hover:not(:disabled) { background: #1d4ed8; }
++    .status { padding: 12px; border-radius: 8px; font-weight: 700; }
++    .Idle { background: #e5e7eb; color: #111827; }
++    .Running { background: #dbeafe; color: #1e3a8a; }
++    .Complete { background: #dcfce7; color: #166534; }
++    .Error { background: #fee2e2; color: #991b1b; }
++    pre { background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; overflow-x: auto; }
++    ul { padding-left: 18px; }
++  </style>
++</head>
++<body>
++  <div class="card">
++    <h1>Dynamic Control Hub</h1>
++    <p>Trigger hunts, monitor Quantule profiler output, and read provenance summaries in real time.</p>
++
++    <div id="status" class="status Idle">Status: <span id="status-text">Idle</span></div>
++
++    <form id="hunt-form">
++      <label for="generations">Generations</label>
++      <input type="number" id="generations" name="generations" placeholder="10" min="1" />
++      <label for="population">Population Size</label>
++      <input type="number" id="population" name="population" placeholder="25" min="1" />
++      <button type="submit" id="start-button">Start Hunt</button>
++    </form>
++
++    <h2>Artifacts</h2>
++    <ul id="artifact-list">
++      <li>No artifacts detected yet.</li>
++    </ul>
++
++    <h2>Provenance</h2>
++    <pre id="provenance-json">Waiting for provenance_*.json...</pre>
++  </div>
++
++  <script>
++    const statusBox = document.getElementById('status');
++    const statusText = document.getElementById('status-text');
++    const artifactList = document.getElementById('artifact-list');
++    const provenanceBox = document.getElementById('provenance-json');
++    const startButton = document.getElementById('start-button');
++    const form = document.getElementById('hunt-form');
++
++    const setStatus = (status) => {
++      statusBox.className = `status ${status}`;
++      statusText.textContent = status;
++      startButton.disabled = status === 'Running';
++      startButton.textContent = status === 'Running' ? 'Hunt Running...' : 'Start Hunt';
++    };
++
++    const renderArtifacts = (files) => {
++      if (!files || files.length === 0) {
++        artifactList.innerHTML = '<li>No artifacts detected yet.</li>';
++        return;
++      }
++      artifactList.innerHTML = '';
++      files.forEach((file) => {
++        const li = document.createElement('li');
++        li.textContent = file;
++        artifactList.appendChild(li);
++      });
++    };
++
++    const pollStatus = async () => {
++      try {
++        const res = await fetch('/api/get-status');
++        if (!res.ok) throw new Error('Failed to fetch status');
++        const data = await res.json();
++        setStatus(data.hunt_status || 'Idle');
++        renderArtifacts(data.found_files || []);
++        provenanceBox.textContent = JSON.stringify(data.final_result || {}, null, 2);
++      } catch (err) {
++        console.error(err);
++        setStatus('Error');
++      }
++    };
++
++    form.addEventListener('submit', async (event) => {
++      event.preventDefault();
++      const payload = {
++        num_generations: Number(document.getElementById('generations').value) || undefined,
++        population_size: Number(document.getElementById('population').value) || undefined,
++      };
++      startButton.disabled = true;
++      startButton.textContent = 'Starting...';
++      try {
++        const res = await fetch('/api/start-hunt', {
++          method: 'POST',
++          headers: { 'Content-Type': 'application/json' },
++          body: JSON.stringify(payload),
++        });
++        if (!res.ok) {
++          const body = await res.json();
++          alert(body.message || 'Failed to start hunt');
++        }
++      } catch (err) {
++        alert(err.message);
++      } finally {
++        startButton.disabled = false;
++      }
++      pollStatus();
++    });
++
++    pollStatus();
++    setInterval(pollStatus, 2000);
++  </script>
++</body>
++</html>

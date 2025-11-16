@@ -1,0 +1,21 @@
+{
+  "hunt_status": "Completed",
+  "found_files": [
+    "/content/provenance_reports/provenance_b0c50aa1-0752-4b67-9827-bb530f69a0d7.json",
+    "/content/provenance_reports/provenance_cadab9d8-bedd-43c6-8110-481ea8ba1346.json",
+    "/content/provenance_reports/provenance_a18099f8-1c6b-4222-8432-5d9a4dea8dcd.json",
+    "/content/provenance_reports/provenance_12c53a32-adee-4908-8b4e-b4b040c34da0.json"
+  ],
+  "final_result": {
+    "job_uuid": "cadab9d8-bedd-43c6-8110-481ea8ba1346",
+    "generation": 0,
+    "param_D": 0.2046645299222588,
+    "param_eta": 0.3345626784484415,
+    "log_prime_sse": 0.027551020516235484,
+    "sdg_h_norm_l2": 0.03681995893479202,
+    "fitness": 36.29629483649861
+  },
+  "last_event": "Analyzed 12c53a32...",
+  "last_sse": "0.365025",
+  "last_h_norm": "0.069868"
+}

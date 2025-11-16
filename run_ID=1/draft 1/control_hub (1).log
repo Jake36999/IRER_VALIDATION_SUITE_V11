@@ -1,0 +1,60 @@
+2025-11-16 21:54:23,017 [INFO] (MainThread) Control Hub: Starting Flask server on http://0.0.0.0:8089
+2025-11-16 21:54:23,018 [INFO] (WatcherThread) Watcher Service: Started monitoring /content/provenance_reports
+2025-11-16 21:54:23,029 [INFO] (MainThread) [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8089
+ * Running on http://172.28.0.12:8089
+2025-11-16 21:54:23,029 [INFO] (MainThread) [33mPress CTRL+C to quit[0m
+2025-11-16 21:54:42,806 [INFO] (Thread-4 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:54:42] "GET /api/get-status HTTP/1.1" 200 -
+2025-11-16 21:55:56,810 [INFO] (Thread-5 (process_request_thread)) API: Received /api/start-hunt request.
+2025-11-16 21:55:56,813 [INFO] (CoreEngineThread) Hunt Thread: Lock acquired. Starting hunt (Gens: 2, Pop: 2).
+2025-11-16 21:55:56,814 [INFO] (Thread-5 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:55:56] "[35m[1mPOST /api/start-hunt HTTP/1.1[0m" 202 -
+2025-11-16 21:55:56,817 [INFO] (CoreEngineThread) --- [CoreEngine] V11.0 HUNT EXECUTION STARTED ---
+2025-11-16 21:55:56,819 [INFO] (CoreEngineThread) [Hunter] Initialized. Loaded 0 runs from /content/logs/aste_hunt_ledger.csv
+2025-11-16 21:55:56,819 [INFO] (CoreEngineThread) [CoreEngine] Starting Hunt: 2 generations (from 0 to 1)
+2025-11-16 21:55:56,819 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING GENERATION 0 ---
+2025-11-16 21:55:56,820 [INFO] (CoreEngineThread) [Hunter] Breeding Generation 0...
+2025-11-16 21:55:56,820 [INFO] (CoreEngineThread) [Hunter] Registered 2 new jobs in ledger.
+2025-11-16 21:55:56,820 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING JOB b0c50aa1-0... ---
+2025-11-16 21:55:56,825 [INFO] (Thread-6 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:55:56] "GET /api/get-status HTTP/1.1" 200 -
+2025-11-16 21:55:58,622 [INFO] (CoreEngineThread)   [CoreEngine] <- Worker OK for b0c50aa1-0
+2025-11-16 21:55:59,667 [INFO] (Thread-1) Watcher: Detected new file: /content/provenance_reports/provenance_b0c50aa1-0752-4b67-9827-bb530f69a0d7.json
+2025-11-16 21:55:59,668 [INFO] (Thread-1) Watcher: Triggering Layer 2 analysis for /content/provenance_reports/provenance_b0c50aa1-0752-4b67-9827-bb530f69a0d7.json...
+2025-11-16 21:55:59,684 [INFO] (CoreEngineThread)   [CoreEngine] <- Validator OK for b0c50aa1-0
+2025-11-16 21:55:59,684 [INFO] (CoreEngineThread) --- [CoreEngine] JOB SUCCEEDED b0c50aa1-0 ---
+2025-11-16 21:55:59,684 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING JOB cadab9d8-b... ---
+2025-11-16 21:56:00,996 [INFO] (CoreEngineThread)   [CoreEngine] <- Worker OK for cadab9d8-b
+2025-11-16 21:56:01,834 [INFO] (CoreEngineThread)   [CoreEngine] <- Validator OK for cadab9d8-b
+2025-11-16 21:56:01,834 [INFO] (CoreEngineThread) --- [CoreEngine] JOB SUCCEEDED cadab9d8-b ---
+2025-11-16 21:56:01,835 [INFO] (CoreEngineThread) [CoreEngine] GENERATION 0 COMPLETE. Processing 2 results...
+2025-11-16 21:56:01,835 [INFO] (CoreEngineThread) [Hunter] Processing 2 new results from /content/provenance_reports...
+2025-11-16 21:56:01,838 [INFO] (CoreEngineThread) [Hunter] Successfully processed and updated 2 runs.
+2025-11-16 21:56:01,841 [INFO] (CoreEngineThread) [CoreEngine] Best Run So Far: cadab9d8... (Fitness: 36.2963)
+2025-11-16 21:56:01,841 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING GENERATION 1 ---
+2025-11-16 21:56:01,841 [INFO] (CoreEngineThread) [Hunter] Breeding Generation 1...
+2025-11-16 21:56:01,842 [INFO] (CoreEngineThread) [Hunter] Registered 2 new jobs in ledger.
+2025-11-16 21:56:01,842 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING JOB a18099f8-1... ---
+2025-11-16 21:56:03,543 [INFO] (CoreEngineThread)   [CoreEngine] <- Worker OK for a18099f8-1
+2025-11-16 21:56:04,193 [INFO] (CoreEngineThread)   [CoreEngine] <- Validator OK for a18099f8-1
+2025-11-16 21:56:04,193 [INFO] (CoreEngineThread) --- [CoreEngine] JOB SUCCEEDED a18099f8-1 ---
+2025-11-16 21:56:04,193 [INFO] (CoreEngineThread) --- [CoreEngine] STARTING JOB 12c53a32-a... ---
+2025-11-16 21:56:05,827 [INFO] (CoreEngineThread)   [CoreEngine] <- Worker OK for 12c53a32-a
+2025-11-16 21:56:06,655 [INFO] (CoreEngineThread)   [CoreEngine] <- Validator OK for 12c53a32-a
+2025-11-16 21:56:06,655 [INFO] (CoreEngineThread) --- [CoreEngine] JOB SUCCEEDED 12c53a32-a ---
+2025-11-16 21:56:06,655 [INFO] (CoreEngineThread) [CoreEngine] GENERATION 1 COMPLETE. Processing 2 results...
+2025-11-16 21:56:06,656 [INFO] (CoreEngineThread) [Hunter] Processing 2 new results from /content/provenance_reports...
+2025-11-16 21:56:06,658 [INFO] (CoreEngineThread) [Hunter] Successfully processed and updated 2 runs.
+2025-11-16 21:56:06,658 [INFO] (CoreEngineThread) [CoreEngine] Best Run So Far: cadab9d8... (Fitness: 36.2963)
+2025-11-16 21:56:06,658 [INFO] (CoreEngineThread) --- [CoreEngine] ALL GENERATIONS COMPLETE ---
+2025-11-16 21:56:06,658 [INFO] (CoreEngineThread) Final Best Run: cadab9d8-bedd-43c6-8110-481ea8ba1346
+2025-11-16 21:56:06,658 [INFO] (CoreEngineThread) Hunt Thread: `execute_hunt()` completed.
+2025-11-16 21:56:06,659 [INFO] (CoreEngineThread) Hunt Thread: Lock released. Hunt finished.
+2025-11-16 21:56:06,659 [INFO] (Thread-1) Watcher: Detected new file: /content/provenance_reports/provenance_cadab9d8-bedd-43c6-8110-481ea8ba1346.json
+2025-11-16 21:56:06,659 [INFO] (Thread-1) Watcher: Triggering Layer 2 analysis for /content/provenance_reports/provenance_cadab9d8-bedd-43c6-8110-481ea8ba1346.json...
+2025-11-16 21:56:06,661 [INFO] (Thread-1) Watcher: Detected new file: /content/provenance_reports/provenance_a18099f8-1c6b-4222-8432-5d9a4dea8dcd.json
+2025-11-16 21:56:06,661 [INFO] (Thread-1) Watcher: Triggering Layer 2 analysis for /content/provenance_reports/provenance_a18099f8-1c6b-4222-8432-5d9a4dea8dcd.json...
+2025-11-16 21:56:06,662 [INFO] (Thread-1) Watcher: Detected new file: /content/provenance_reports/provenance_12c53a32-adee-4908-8b4e-b4b040c34da0.json
+2025-11-16 21:56:06,662 [INFO] (Thread-1) Watcher: Triggering Layer 2 analysis for /content/provenance_reports/provenance_12c53a32-adee-4908-8b4e-b4b040c34da0.json...
+2025-11-16 21:57:07,801 [INFO] (Thread-7 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:57:07] "GET /api/get-status HTTP/1.1" 200 -
+2025-11-16 21:58:18,455 [INFO] (Thread-8 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:58:18] "GET /api/get-status HTTP/1.1" 200 -
+2025-11-16 21:59:13,811 [INFO] (Thread-9 (process_request_thread)) 127.0.0.1 - - [16/Nov/2025 21:59:13] "GET /api/get-status HTTP/1.1" 200 -

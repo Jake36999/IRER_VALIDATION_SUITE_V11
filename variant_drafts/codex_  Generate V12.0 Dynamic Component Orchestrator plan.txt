@@ -1,0 +1,520 @@
+﻿Tab 1
+Mandate: Generate the V12.0 "Dynamic Component Orchestrator" (DCO) Architectural Brief & Build Plan.Context: The V11.0 "HPC-SDG" build [cite: Phase_4_Control_Hub_Plan.md] is considered the "locked" Layer 1 HPC Core. We must now design the V12.0 DCO that will manage this locked component and all future Layer 2 (analysis) components.Core Problem: The V11.0 app.py + core_engine.py pipeline is hard-coded. It knows it must run the HPC hunt. The V12.0 DCO must be dynamic. It must discover components (like the HPC core, TDA, BSSN-check, etc.) and run them based on a user-defined workflow.Required Features (based on user ideas):Component Manifest (component_manifest.json):This is the core of the new architecture. Every component (e.g., worker_sncgl_sdg.py, tda_analyzer.py) must have a companion component_manifest.json file.This manifest must define:Standardized I/O Markers (Idea 1): inputs and outputs (e.g., {"name": "provenance_file", "type": "path:json"}).Standardized Dependencies (Concern 1): A pointer to a requirements.txt file.Variable Controls (Concern 2): A tunable_variables list (e.g., {"name": "N_grid", "label": "Grid Size", "type": "int"}) that the UI can read to build a settings panel.The "Add-on" UI (The "Visual Pipeline"):The V12.0 Hub (app.py) must scan a /components directory and dynamically list all available "nodes" (based on their manifests) in a UI panel.The UI must provide a "canvas" where a user can drag-and-drop these nodes and "wire" them together (e.g., HPC_Core.provenance_output $\rightarrow$ TDA_Analyzer.provenance_input).This visual pipeline is the new core_engine logic. It replaces the hard-coded V11.0 execute_hunt() function.The "Fleet Manager" (The "Orchestrator"):The new orchestrator must be able to deploy jobs to multiple destinations (local, Colab, Cloud VM via ssh).It must read the UI-defined pipeline and:a.  Create Directories (Idea 3): Automatically run mkdir -p for all required I/O paths.b.  Deploy & Run (Idea 4): Execute the component's script on the selected VM (e.g., ssh user@jax-vm-1 "python worker_sncgl_sdg.py --job_uuid ..." ).c.  Monitor (Idea 4): Provide a central dashboard (the index.html) that receives status updates from all running jobs to "verify data integrity."AI-Development Synergy:The plan must acknowledge that this "Component Manifest" standard makes AI-assisted development (with Aletheia) far more accurate. The AI's task is no longer "build a complex pipeline" but "build a single component that is V12.0-compliant," which is a smaller, verifiable, and less "lazy" task.
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Authored the V12.0 Dynamic Component Orchestrator architectural brief detailing context, manifest schema, directory layout, visual pipeline expectations, orchestrator lifecycle, fleet adapters, milestone plan, AI synergy, and success criteria for dynamic Layer 2 workflows.
+Testing
+* ⚠️ Not run (documentation-only change)
+File (1)
+* advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Brief.md
+* New
+* diff --git a/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Brief.md b/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Brief.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..c54ccb37439b5cd43fa1d04c44156c0dddbb77bb
+--- /dev/null
++++ b/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Brief.md        
+@@ -0,0 +1,120 @@
++# V12.0 "Dynamic Component Orchestrator" (DCO) Architectural Brief & Build Plan
++
++## 1. Context and Problem Statement
++- **Baseline (Locked Layer 1):** V11.0 HPC-SDG core (`app.py` + `core_engine.py`) is fixed to run the HPC hunt pipeline.
++- **Gap:** Execution logic is hard-coded; adding new analyses (TDA, BSSN-check, etc.) requires code edits.
++- **Goal for V12.0:** Introduce a dynamic, manifest-driven orchestrator that discovers components, renders them as UI nodes, and executes user-defined workflows across heterogeneous compute destinations.
++
++## 2. Architectural Tenets
++1. **Discoverable Components:** Every executable unit ships with a `component_manifest.json`; no component is runnable without it.
++2. **Composable Pipelines:** The pipeline is modeled as a DAG of manifest-defined nodes and typed edges (input/output markers).
++3. **Deployment Agnosticism:** A single orchestrator targets local, Colab, or SSH-accessible VMs with the same pipeline spec.
++4. **Data Integrity First:** Auto-create directories, enforce manifest-specified I/O contracts, and stream status to the central dashboard.
++5. **AI-First Modularity:** Component contracts are standardized to make AI-assisted component authoring verifiable and scoped.
++
++## 3. Component Manifest Specification (`component_manifest.json`)
++| Field | Purpose | Example |
++| --- | --- | --- |
++| `name` | Human-readable component name | `"HPC_Core"` |
++| `entrypoint` | Script or module to execute | `"worker_sncgl_sdg.py"` |
++| `version` | Semver for compatibility gates | `"1.0.0"` |
++| `inputs` | Standardized I/O markers | `[{"name":"provenance_file","type":"path:json"}]` |
++| `outputs` | Standardized I/O markers | `[{"name":"provenance_output","type":"path:json"}]` |
++| `dependencies` | Pointer to requirements file(s) | `{"requirements":"requirements.txt"}` |
++| `tunable_variables` | UI-readable controls | `[{"name":"N_grid","label":"Grid Size","type":"int","default":128}]` |
++| `resources` | Optional runtime hints | `{"gpu":false,"memory_gb":4}` |
++| `runtime` | Execution command template | `"python {entrypoint} --job_uuid {job_uuid} {param_flags}"` |
++| `artifacts` | Declared artifact paths | `[{"name":"log","path":"logs/{job_uuid}.txt"}]` |
++| `contracts` | Validation hooks | `{"schema":"schemas/provenance.schema.json"}` |
++
++**Rules:**
++- Manifests live beside component scripts in `/components/<component_name>/`.
++- Inputs/outputs must enumerate typed channels; wiring is type-checked at graph compile time.
++- `tunable_variables` drive UI control generation; defaults are optional but recommended.
++- `dependencies.requirements` is optional for the locked HPC core but mandatory for new Layer 2 analyzers.
++
++## 4. Directory & Packaging Layout
++```
++/components/
++  HPC_Core/
++    worker_sncgl_sdg.py
++    component_manifest.json
++  TDA_Analyzer/
++    tda_analyzer.py
++    component_manifest.json
++  BSSN_Check/
++    bssn_check.py
++    component_manifest.json
++/orchestrator/
++  app.py            # Hub UI + API (visual pipeline)
++  engine.py         # Graph compiler, validator
++  fleet_manager.py  # Execution targeting (local/Colab/SSH)
++  schemas/
++    component_manifest.schema.json
++  static/
++    index.html, js/, css/ (visual canvas + dashboard)
++```
++
++## 5. Visual Pipeline (UI/UX Requirements)
++- **Component Palette:** On load, `/components` is scanned; every valid manifest becomes a draggable node with:
++  - Name, version badge, and icon derived from manifest.
++  - Auto-generated settings drawer from `tunable_variables`.
++  - Input/output ports derived from `inputs`/`outputs` types.
++- **Canvas & Wiring:** Users drag nodes and draw connections; edges enforce compatible types.
++- **Workflow Export:** Pipeline serialized to `pipeline.json` (DAG with node IDs, bound parameters, target runtime class).
++- **Dashboard:** Central status view showing job UUID, component name, target host, and live state (queued/running/succeeded/failed) with log links.
++
++## 6. Orchestrator & Fleet Manager
++### 6.1 Graph Lifecycle
++1. **Discover → Validate:** Load manifests, validate against `component_manifest.schema.json`, index by capability tags.
++2. **Compile:** Convert UI DAG to an executable plan (topological order, concurrency groups, destination mapping).
++3. **Materialize I/O:** For every node, pre-create declared directories (`mkdir -p` for output parents and artifact roots).
++4. **Execute:** Dispatch per-node jobs via Fleet Manager with per-destination run adapters.
++5. **Monitor:** Stream stdout/stderr and heartbeat pings to dashboard; persist job ledger.
++6. **Verify:** After completion, run optional contract checks (schema validation for declared outputs).
++
++### 6.2 Fleet Manager Targets
++- **Local Adapter:** `subprocess.Popen` + streamed logging; honors manifest runtime template.
++- **Colab Adapter:** Packaging via `requirements` sync + `pip install -r` then `python entrypoint ...` (over notebooks via `!` commands or background tmux).
++- **SSH Adapter:** `ssh user@host "mkdir -p ... && python {entrypoint} ..."` with configurable key/agent forwarding.
++- **Extensibility:** Adapters implement a common interface (`prepare`, `launch`, `status`, `teardown`).
++
++## 7. Data & Control Flows (Example)
++1. **HPC Core (locked Layer 1)** produces `provenance_output` (JSON) → exposed as `outputs.provenance_output`.
++2. **TDA Analyzer (Layer 2)** declares `inputs.provenance_input` of type `path:json`; wiring enforces match.
++3. **BSSN Check (Layer 2)** takes `tda_results` and emits `bssn_report`.
++4. **Dashboard** shows sequential or parallel execution based on graph ordering; failures bubble up with component context.
++
++## 8. Build Plan (Milestones)
++1. **Scaffolding (Week 1):**
++   - Add manifest JSON schema and validator.
++   - Implement manifest discovery indexer.
++2. **Pipeline Compiler (Week 2):**
++   - DAG model with type-safe edges and topological sort.
++   - Parameter binding from `tunable_variables` into runtime templates.
++3. **Fleet Manager (Week 3):**
++   - Local adapter MVP; abstract adapter interface.
++   - SSH adapter with directory pre-flight and log streaming.
++4. **Visual Pipeline (Week 4):**
++   - Palette + canvas + wiring + `pipeline.json` export.
++   - Settings drawer auto-generated from manifest controls.
++5. **Orchestration Loop (Week 5):**
++   - End-to-end execution from exported pipeline; status bus to dashboard.
++   - Contract checks for declared outputs.
++6. **Hardening (Week 6):**
++   - Retry/backoff per node; artifact checksuming; audit log; unit/e2e tests.
++
++## 9. AI Development Synergy
++- Standardized manifests provide narrow, verifiable contracts for AI agents (e.g., Aletheia): building a new component = writing a script + manifest that satisfies schema and I/O types.
++- Automated linting: manifest schema validation + stub runners ensure AI-generated components are runnable in isolation.
++
++## 10. Risks & Mitigations
++- **Manifest Drift:** Enforce schema CI gate; reject nodes with missing/invalid manifests.
++- **Dependency Conflicts:** Isolate per-destination virtualenvs; allow optional container images in manifest.
++- **I/O Type Mismatch:** Type-check during graph compile; simulate dry-run path creation.
++- **Remote Failure Visibility:** Persistent job ledger + streamed logs + heartbeat timeouts.
++
++## 11. Success Criteria
++- Zero code changes needed to add a new Layer 2 analyzer—drop in component folder with manifest.
++- UI can draw, save, and execute a pipeline that chains HPC Core → TDA Analyzer → BSSN Check locally and via SSH.
++- Dashboard displays live state and artifacts for every node with verifiable output schemas.
+
+
+
+
+Tab 2
+Mandate: Generate the V12.0 "Dynamic Component Orchestrator" (DCO) Architectural Brief & Build Plan.Context: The V11.0 "HPC-SDG" build [cite: Phase_4_Control_Hub_Plan.md] is considered the "locked" Layer 1 HPC Core. We must now design the V12.0 DCO that will manage this locked component and all future Layer 2 (analysis) components.Core Problem: The V11.0 app.py + core_engine.py pipeline is hard-coded. It knows it must run the HPC hunt. The V12.0 DCO must be dynamic. It must discover components (like the HPC core, TDA, BSSN-check, etc.) and run them based on a user-defined workflow.Required Features (based on user ideas):Component Manifest (component_manifest.json):This is the core of the new architecture. Every component (e.g., worker_sncgl_sdg.py, tda_analyzer.py) must have a companion component_manifest.json file.This manifest must define:Standardized I/O Markers (Idea 1): inputs and outputs (e.g., {"name": "provenance_file", "type": "path:json"}).Standardized Dependencies (Concern 1): A pointer to a requirements.txt file.Variable Controls (Concern 2): A tunable_variables list (e.g., {"name": "N_grid", "label": "Grid Size", "type": "int"}) that the UI can read to build a settings panel.The "Add-on" UI (The "Visual Pipeline"):The V12.0 Hub (app.py) must scan a /components directory and dynamically list all available "nodes" (based on their manifests) in a UI panel.The UI must provide a "canvas" where a user can drag-and-drop these nodes and "wire" them together (e.g., HPC_Core.provenance_output $\rightarrow$ TDA_Analyzer.provenance_input).This visual pipeline is the new core_engine logic. It replaces the hard-coded V11.0 execute_hunt() function.The "Fleet Manager" (The "Orchestrator"):The new orchestrator must be able to deploy jobs to multiple destinations (local, Colab, Cloud VM via ssh).It must read the UI-defined pipeline and:a.  Create Directories (Idea 3): Automatically run mkdir -p for all required I/O paths.b.  Deploy & Run (Idea 4): Execute the component's script on the selected VM (e.g., ssh user@jax-vm-1 "python worker_sncgl_sdg.py --job_uuid ..." ).c.  Monitor (Idea 4): Provide a central dashboard (the index.html) that receives status updates from all running jobs to "verify data integrity."AI-Development Synergy:The plan must acknowledge that this "Component Manifest" standard makes AI-assisted development (with Aletheia) far more accurate. The AI's task is no longer "build a complex pipeline" but "build a single component that is V12.0-compliant," which is a smaller, verifiable, and less "lazy" task.
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Documented V12.0 DCO objectives and a manifest-driven component standard to keep the V11 HPC core locked while enabling dynamic Layer 2 pipelines with standardized I/O, tunables, and dependencies.
+* Outlined orchestrator responsibilities, directory layout, execution lifecycle, and an incremental build roadmap covering fleet backends, monitoring, and AI-focused component validation.
+Testing
+* Not run (documentation-only change).
+File (1)
+* diff --git a/advanced validation suite/V12_DCO_Architectural_Brief.md b/advanced validation suite/V12_DCO_Architectural_Brief.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cea88cef54b754931baa7b2a6b2f798fc8a08a6
+--- /dev/null
++++ b/advanced validation suite/V12_DCO_Architectural_Brief.md        
+@@ -0,0 +1,108 @@
++# V12.0 Dynamic Component Orchestrator (DCO): Architectural Brief & Build Plan
++
++## 1) Context and Objectives
++- **Layer 1 is locked:** The V11.0 "HPC-SDG" pipeline (app.py + core_engine.py) is treated as an immutable Layer 1 asset; it must be runnable as-is via a manifest-driven wrapper rather than direct calls.
++- **Dynamic Layer 2 orchestration:** V12.0 replaces the hard-coded `execute_hunt()` flow with a manifest-driven pipeline runner that can assemble and execute arbitrary analysis chains (e.g., HPC core → TDA analyzer → BSSN check).
++- **AI-aligned component standard:** A strict Component Manifest spec (JSON) constrains each node’s I/O, dependencies, and tunables so AI co-developers can build/verifiy single components in isolation.
++
++## 2) Component Manifest Standard (component_manifest.json)
++Every executable component (e.g., `worker_sncgl_sdg.py`, `tda_analyzer.py`, `bssn_validator.py`) ships with a sibling `component_manifest.json`. Core fields:
++
++| Field | Purpose |
++| --- | --- |
++| `id` (string, unique) | Registry key (e.g., `hpc_core_v11`). |
++| `name` / `description` | UI display values. |
++| `entrypoint` | Script or module to execute (relative path). |
++| `execution` | `{"mode": "python"|"shell", "args": ["--job_uuid", "{{job_uuid}}"]}` templated with pipeline context. |
++| `inputs` | Array of typed ports, e.g., `{ "name": "provenance_file", "type": "path:json", "description": "Provenance from upstream." }`. |
++| `outputs` | Array of typed ports, e.g., `{ "name": "provenance_out", "type": "path:json" }`. |
++| `tunable_variables` | UI-surfaceable controls, e.g., `{ "name": "N_grid", "label": "Grid Size", "type": "int", "default": 128, "min": 8, "max": 2048 }`. |
++| `dependencies` | Pointer to a `requirements.txt` or conda env file. |
++| `resources` | Optional hints (`{"needs_gpu": true, "memory_gb": 8}`). |
++| `artifacts` | Declared files/dirs produced or consumed for integrity checks. |
++
++**Schema rules**
++- All names are snake_case; inputs/outputs must declare `type` using `category:format` (e.g., `path:json`, `path:hdf5`, `scalar:float`).
++- A component must declare at least one output; zero-input components (sources) are allowed.
++- Dependencies are isolated per component; orchestrator installs/validates them on the chosen destination.
++
++**Example (HPC core wrapper)**
++```json
++{
++  "id": "hpc_core_v11",
++  "name": "HPC Core (Locked)",
++  "entrypoint": "components/hpc_core/app.py",
++  "execution": {"mode": "python", "args": ["--config", "{{config_path}}", "--output", "{{provenance_out}}"]},
++  "inputs": [{"name": "config_path", "type": "path:json"}],
++  "outputs": [{"name": "provenance_out", "type": "path:json"}],
++  "tunable_variables": [{"name": "N_grid", "label": "Grid Size", "type": "int", "default": 128}],
++  "dependencies": "requirements.txt",
++  "resources": {"needs_gpu": true}
++}
++```
++
++## 3) Component Discovery & Registry
++- The DCO scans `/components/**/component_manifest.json` at startup.
++- Manifests failing JSON schema validation are quarantined with UI warnings; only validated components appear as draggable nodes.
++- The registry caches parsed manifests, resolves relative paths, and exposes a typed port catalog so the UI can enforce compatible wiring (e.g., `path:json` output can feed only `path:json` inputs).
++
++## 4) Visual Pipeline (Add-on UI)
++- **Palette:** Dynamically populated from the registry; each manifest becomes a draggable node with labeled inputs/outputs and tunable controls.
++- **Canvas wiring:** Users draw edges between compatible ports; invalid connections are blocked client-side.
++- **Parameter panel:** Tunables from `tunable_variables` render as form controls; per-node overrides are stored in the pipeline spec.
++- **Persistence:** Pipelines are saved as JSON (DAG spec) including node IDs, selected destinations, parameter overrides, and explicit I/O bindings.
++- **Default pipeline:** Ship a pre-built graph reproducing the V11 HPC hunt (HPC core only) to demonstrate backward compatibility.
++
++## 5) Orchestrator (Fleet Manager)
++- **Input:** Pipeline DAG + execution context (job UUID, base output dir, selected destinations per node).
++- **Preparation:**
++  - Topologically sort DAG; pre-create all declared output directories/files with `mkdir -p` semantics.
++  - Materialize a run manifest (timestamped) capturing node assignments, args, and intended artifacts.
++- **Execution backends:**
++  - **Local:** `python {{entrypoint}} …` executed via subprocess with streamed logs.
++  - **SSH/Cloud VM:** `ssh user@host "python {{entrypoint}} …"` with rsync/scp for inputs and artifact return.
++  - **Colab:** (stretch) push scripts + manifest to Colab instance and trigger via `!python` cell or hosted service hook.
++- **Monitoring:**
++  - Each node streams status (queued/running/succeeded/failed) and heartbeat into a central WebSocket channel surfaced on `index.html`.
++  - Artifacts are checksummed post-run to verify integrity; mismatches raise alerts and block downstream execution.
++- **Recovery:** Failed nodes mark downstream edges as blocked; UI offers retry or reroute options.
++
++## 6) Standard Directory Layout
++```
++/components
++  /hpc_core
++    app.py
++    component_manifest.json
++    requirements.txt
++  /tda_analyzer
++    tda_analyzer.py
++    component_manifest.json
++/ui
++  index.html (canvas + palette + status panel)
++/orchestrator
++  orchestrator.py (DAG runner, backends, schema validation)
++  schemas/component_manifest.schema.json
++  schemas/pipeline.schema.json
++```
++
++## 7) Execution Lifecycle
++1. **Discovery:** Load manifests → validate → populate UI palette.
++2. **Design:** User draws pipeline, sets tunables, chooses destinations → pipeline JSON saved.
++3. **Plan:** Orchestrator validates type compatibility, allocates directories, and resolves concrete CLI args.
++4. **Deploy:** Per-node backend selected (local/ssh/colab); dependencies installed or verified using manifest pointer.
++5. **Run:** Execute nodes respecting DAG order; stream logs and metrics to central dashboard.
++6. **Integrity:** Checksum declared artifacts; persist provenance bundle (pipeline spec + run manifest + checksums).
++7. **Finalize:** Aggregate status and surface downloadable artifact map to the user.
++
++## 8) Build Plan (Incremental)
++1. **Manifest & Schema (MVP):** Define JSON Schema, implement registry + validator, add manifest to HPC core wrapper to prove backward compatibility.
++2. **UI Palette & Canvas:** Build dynamic node list, wiring validation, tunable panel, and pipeline JSON export/import.
++3. **Core Orchestrator:** Implement DAG planner, directory bootstrap, and local backend with checksum-based integrity verification.
++4. **Fleet Backends:** Add SSH runner (rsync/scp + remote exec) and Colab adapter; integrate destination selection into UI per node.
++5. **Monitoring Dashboard:** WebSocket status/heartbeat feed, log streaming, and artifact integrity view in `index.html`.
++6. **QA & AI Dev Loop:** Provide sample component templates + manifest generator so future components are "V12-compliant" tasks; add automated schema tests.
++
++## 9) AI-Development Synergy
++- The manifest standard narrows AI work to building single, verifiable nodes with explicit I/O contracts and dependency isolation.
++- Component templates + schema validation enable automated CI to reject non-compliant contributions, reducing integration risk.
++- The orchestrator’s DAG + artifact checks provide deterministic feedback that AI-generated components either meet or fail the contract, minimizing "lazy" or ambiguous behaviors.
+
+
+
+
+Tab 3
+Mandate: Generate the V12.0 "Dynamic Component Orchestrator" (DCO) Architectural Brief & Build Plan.Context: The V11.0 "HPC-SDG" build [cite: Phase_4_Control_Hub_Plan.md] is considered the "locked" Layer 1 HPC Core. We must now design the V12.0 DCO that will manage this locked component and all future Layer 2 (analysis) components.Core Problem: The V11.0 app.py + core_engine.py pipeline is hard-coded. It knows it must run the HPC hunt. The V12.0 DCO must be dynamic. It must discover components (like the HPC core, TDA, BSSN-check, etc.) and run them based on a user-defined workflow.Required Features (based on user ideas):Component Manifest (component_manifest.json):This is the core of the new architecture. Every component (e.g., worker_sncgl_sdg.py, tda_analyzer.py) must have a companion component_manifest.json file.This manifest must define:Standardized I/O Markers (Idea 1): inputs and outputs (e.g., {"name": "provenance_file", "type": "path:json"}).Standardized Dependencies (Concern 1): A pointer to a requirements.txt file.Variable Controls (Concern 2): A tunable_variables list (e.g., {"name": "N_grid", "label": "Grid Size", "type": "int"}) that the UI can read to build a settings panel.The "Add-on" UI (The "Visual Pipeline"):The V12.0 Hub (app.py) must scan a /components directory and dynamically list all available "nodes" (based on their manifests) in a UI panel.The UI must provide a "canvas" where a user can drag-and-drop these nodes and "wire" them together (e.g., HPC_Core.provenance_output $\rightarrow$ TDA_Analyzer.provenance_input).This visual pipeline is the new core_engine logic. It replaces the hard-coded V11.0 execute_hunt() function.The "Fleet Manager" (The "Orchestrator"):The new orchestrator must be able to deploy jobs to multiple destinations (local, Colab, Cloud VM via ssh).It must read the UI-defined pipeline and:a.  Create Directories (Idea 3): Automatically run mkdir -p for all required I/O paths.b.  Deploy & Run (Idea 4): Execute the component's script on the selected VM (e.g., ssh user@jax-vm-1 "python worker_sncgl_sdg.py --job_uuid ..." ).c.  Monitor (Idea 4): Provide a central dashboard (the index.html) that receives status updates from all running jobs to "verify data integrity."AI-Development Synergy:The plan must acknowledge that this "Component Manifest" standard makes AI-assisted development (with Aletheia) far more accurate. The AI's task is no longer "build a complex pipeline" but "build a single component that is V12.0-compliant," which is a smaller, verifiable, and less "lazy" task.
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Authored the V12.0 Dynamic Component Orchestrator architectural brief detailing context, guiding principles, manifest schema, visual pipeline expectations, orchestrator runtime, and data conventions.
+* Outlined a step-by-step build plan integrating the locked V11.0 HPC core with dynamic Layer 2 components plus AI-assisted development guidelines.
+Testing
+* ⚠️ Not run (documentation-only change)
+File (1)
+* diff --git a/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Plan.md b/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Plan.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b39f87b89a1eaec2bbe1bfc6c0949fd3268fca6
+--- /dev/null
++++ b/advanced validation suite/V12.0_Dynamic_Component_Orchestrator_Plan.md        
+@@ -0,0 +1,131 @@
++# V12.0 Dynamic Component Orchestrator (DCO) — Architectural Brief & Build Plan
++
++## Purpose and Context
++- **Layer 1 is locked:** The V11.0 "HPC-SDG" pipeline (`app.py` + `core_engine.py`) remains immutable as the trusted Layer 1 HPC core. V12.0 must wrap and orchestrate it rather than modify it.
++- **Layer 2 must be dynamic:** New analytical components (e.g., TDA analyzers, BSSN checks) should be discoverable and executable without hard-coding.
++- **Outcome:** A reusable Dynamic Component Orchestrator (DCO) that discovers components via manifests, lets users compose pipelines visually, and dispatches work to local/remote targets while maintaining standardized I/O and telemetry.
++
++## Guiding Principles
++1. **Manifest-first contracts:** Every component ships with a `component_manifest.json` that defines interfaces, dependencies, and tunable variables, enabling deterministic orchestration and AI-assisted development.
++2. **Visual-first orchestration:** The UI is the source of truth for wiring components; pipelines are expressed as DAGs instead of imperative code.
++3. **Execution neutrality:** The orchestrator abstracts execution destinations (local, Colab, SSH VM) while keeping consistent run control (directories, env bootstrap, logging, status events).
++4. **Integrity and provenance:** Automatic directory creation, status reporting, and explicit I/O markers ensure traceable, repeatable runs.
++
++## Component Manifest Standard (`component_manifest.json`)
++Each component lives in `/components/<component_name>/` alongside its manifest and assets.
++
++### Required fields
++```json
++{
++  "id": "tda_analyzer",
++  "version": "1.0.0",
++  "entrypoint": "tda_analyzer.py",
++  "description": "Computes TDA metrics over provenance outputs.",
++  "inputs": [
++    {"name": "provenance_file", "type": "path:json", "required": true, "description": "HPC provenance bundle."}
++  ],
++  "outputs": [
++    {"name": "tda_report", "type": "path:json", "description": "TDA summary and metrics."}
++  ],
++  "dependencies": {
++    "requirements": "requirements.txt",
++    "system": ["python3"],
++    "resources": {"gpu": false, "cpu_cores": 4, "memory_gb": 8}
++  },
++  "tunable_variables": [
++    {"name": "N_grid", "label": "Grid Size", "type": "int", "default": 256, "min": 32, "max": 1024}
++  ],
++  "execution": {
++    "runtime": ["local", "ssh", "colab"],
++    "args": ["--job_uuid", "{job_uuid}"],
++    "env": {"OMP_NUM_THREADS": "4"}
++  }
++}
++```
++
++### Notes
++- **Standardized I/O markers:** `inputs` and `outputs` enumerate contract names, types, and optional validation hints. The orchestrator uses these to enforce wiring compatibility in the UI and to build CLI arguments/file paths.
++- **Dependencies:** `requirements` points to a colocated file; `system/resources` guide scheduling (e.g., select GPU-capable hosts).
++- **Tunable variables:** Drive the UI settings panel; the orchestrator injects them as CLI flags or env vars per component policy.
++- **Execution block:** Declares allowable runtimes, default args, and environment overlays.
++
++## Visual Pipeline (UI) Requirements
++- **Component palette:** On load, the Hub scans `/components/**/component_manifest.json` and renders nodes with their `id`, `description`, inputs, outputs, and tunables.
++- **Canvas + wiring:** Users drag nodes onto a canvas and connect outputs ➜ inputs. Connections are validated by name/type compatibility defined in manifests.
++- **Node configuration:** Selecting a node exposes tunable variables with proper widgets (int, float, enum, file path, boolean). Defaults come from the manifest.
++- **Pipeline persistence:** The UI saves a DAG spec (e.g., `pipeline.json`) capturing nodes, tunables, runtime target (local/ssh/colab), and edges.
++- **Run controls:** Start, pause, cancel; surface run UUID, log tail, and current status per node.
++
++## Orchestrator (Fleet Manager) Design
++### Discovery and Registry
++- On startup, recursively load manifests under `/components`. Validate schema and build an in-memory registry keyed by `id` with entrypoint paths, dependency metadata, and I/O contracts.
++
++### Pipeline Compilation
++- Convert the UI DAG into an execution plan:
++  - **Topological order** respecting data dependencies.
++  - **Per-node runtime binding** from UI selection; fallback to manifest defaults.
++  - **I/O resolution**: assign concrete file paths for each edge; precompute required directories.
++
++### Preparation
++- **Directory creation:** For each output marker, `mkdir -p` parent directories (Idea 3). Standardize under `/runs/<job_uuid>/<node_id>/outputs/` and `/inputs/`.
++- **Environment prep:**
++  - Local: optional venv; install `requirements.txt` if not cached.
++  - SSH: upload component folder (rsync/scp), ensure Python and deps; respect `resources` when selecting host.
++  - Colab: mount via notebook bootstrap script that fetches component bundle and installs requirements.
++
++### Execution
++- Build commands from manifest entrypoint + args + tunables (e.g., `python worker_sncgl_sdg.py --job_uuid ... --N_grid 256`).
++- Dispatch per target:
++  - **Local:** subprocess with streamed stdout/stderr.
++  - **SSH:** `ssh user@host "python /path/to/component/entrypoint ..."` with optional tmux/screen for resiliency.
++  - **Colab:** issue notebook cell execution or background script via Colab APIs.
++- **Status reporting (Idea 4):** Components should emit heartbeat/status JSON lines; the orchestrator collects and forwards to the central dashboard (`index.html`).
++
++### Monitoring & Integrity
++- Central dashboard shows per-node states: queued ➜ running ➜ succeeded/failed, with timestamps and recent logs.
++- Optional checksum/size checks on declared outputs to confirm data integrity post-run.
++- Persist run metadata (`run_manifest.json`) capturing pipeline spec, assignments, timestamps, and artifacts.
++
++## Data and Pathing Conventions
++- **Run root:** `/runs/<job_uuid>/` (mirrored on remote hosts under a configurable root).
++- **Inputs:** `/runs/<job_uuid>/<node_id>/inputs/<input_name>` (symlink or copy from upstream outputs).
++- **Outputs:** `/runs/<job_uuid>/<node_id>/outputs/<output_name>`.
++- **Logs:** `/runs/<job_uuid>/<node_id>/logs/stdout.log` and `stderr.log`; streamed to dashboard.
++
++## Build Plan
++1. **Schema + validation**
++   - Define JSON schema for `component_manifest.json` and implement loader/validator.
++   - Provide manifest examples for Layer 1 HPC core and at least two Layer 2 components (e.g., TDA, BSSN).
++2. **Component registry service**
++   - Implement discovery under `/components/**/component_manifest.json`.
++   - Expose registry via API (for UI) with node metadata, I/O markers, and tunables.
++3. **Pipeline representation**
++   - Define `pipeline.json` format (nodes, edges, tunables, runtime target per node).
++   - Implement serializer/deserializer and DAG validation (acyclic, type-compatible edges, required inputs satisfied).
++4. **UI (Visual Pipeline)**
++   - Palette rendering from registry; drag/drop nodes onto canvas.
++   - Wiring with compatibility rules; node inspector for tunables and runtime target.
++   - Run controls and pipeline persistence (save/load).
++5. **Orchestrator runtime**
++   - Job planner: topological scheduling, path allocation, directory creation.
++   - Runtime adapters: local subprocess, SSH executor, Colab bootstrap.
++   - Dependency installer with caching keyed by `requirements.txt` hash.
++   - Status/event bus feeding dashboard; log tail streaming.
++6. **Integration of Layer 1 HPC core**
++   - Wrap the locked V11.0 `app.py/core_engine.py` as a manifest-driven component with declared `provenance_output` for downstream consumers.
++7. **Integrity & QA**
++   - Output validation hooks (size/checksum/schema where applicable).
++   - End-to-end dry runs using a sample pipeline: HPC core ➜ TDA analyzer ➜ BSSN check.
++8. **AI-assisted workflow**
++   - Document the manifest standard and template so AI agents can generate new components reliably.
++   - Add linting checks to ensure component submissions include valid manifests and requirements pointers.
++
++## AI-Development Synergy
++- The manifest contract narrows AI tasks to well-bounded, verifiable components. Aletheia can generate a component + manifest pair; CI validates schema compliance and runtime smoke tests.
++- The orchestrator’s standardized I/O and tunables reduce ambiguity, improving AI-assisted iteration speed and reliability.
++
++## Deliverables
++- `component_manifest.json` schema and examples.
++- Updated Hub UI with palette, canvas, wiring, and node inspector.
++- Orchestrator services: registry, planner, runtime adapters, status dashboard integration.
++- Documentation for component authors and operators (runbook, manifest template, sample pipelines).
+
+
+
+
+Tab 4
+Mandate: Generate the V12.0 "Dynamic Component Orchestrator" (DCO) Architectural Brief & Build Plan.Context: The V11.0 "HPC-SDG" build [cite: Phase_4_Control_Hub_Plan.md] is considered the "locked" Layer 1 HPC Core. We must now design the V12.0 DCO that will manage this locked component and all future Layer 2 (analysis) components.Core Problem: The V11.0 app.py + core_engine.py pipeline is hard-coded. It knows it must run the HPC hunt. The V12.0 DCO must be dynamic. It must discover components (like the HPC core, TDA, BSSN-check, etc.) and run them based on a user-defined workflow.Required Features (based on user ideas):Component Manifest (component_manifest.json):This is the core of the new architecture. Every component (e.g., worker_sncgl_sdg.py, tda_analyzer.py) must have a companion component_manifest.json file.This manifest must define:Standardized I/O Markers (Idea 1): inputs and outputs (e.g., {"name": "provenance_file", "type": "path:json"}).Standardized Dependencies (Concern 1): A pointer to a requirements.txt file.Variable Controls (Concern 2): A tunable_variables list (e.g., {"name": "N_grid", "label": "Grid Size", "type": "int"}) that the UI can read to build a settings panel.The "Add-on" UI (The "Visual Pipeline"):The V12.0 Hub (app.py) must scan a /components directory and dynamically list all available "nodes" (based on their manifests) in a UI panel.The UI must provide a "canvas" where a user can drag-and-drop these nodes and "wire" them together (e.g., HPC_Core.provenance_output $\rightarrow$ TDA_Analyzer.provenance_input).This visual pipeline is the new core_engine logic. It replaces the hard-coded V11.0 execute_hunt() function.The "Fleet Manager" (The "Orchestrator"):The new orchestrator must be able to deploy jobs to multiple destinations (local, Colab, Cloud VM via ssh).It must read the UI-defined pipeline and:a.  Create Directories (Idea 3): Automatically run mkdir -p for all required I/O paths.b.  Deploy & Run (Idea 4): Execute the component's script on the selected VM (e.g., ssh user@jax-vm-1 "python worker_sncgl_sdg.py --job_uuid ..." ).c.  Monitor (Idea 4): Provide a central dashboard (the index.html) that receives status updates from all running jobs to "verify data integrity."AI-Development Synergy:The plan must acknowledge that this "Component Manifest" standard makes AI-assisted development (with Aletheia) far more accurate. The AI's task is no longer "build a complex pipeline" but "build a single component that is V12.0-compliant," which is a smaller, verifiable, and less "lazy" task.
+Copy
+Version 1
+Version 2
+Version 3
+Version 4
+Summary
+* Authored the V12.0 Dynamic Component Orchestrator brief outlining goals, manifest schema, discovery/registry, visual pipeline UI, and fleet management responsibilities to replace the hard-coded V11 workflow while honoring the locked Phase_4 baseline.
+* Provided execution lifecycle governance, a phased delivery roadmap, AI-development synergies, and expected outcomes for the modular component marketplace and monitoring layer.
+Testing
+* ⚠️ Not run (documentation-only changes)
+File (1)
+* diff --git a/advanced validation suite/V12_DCO_Architectural_Brief.md b/advanced validation suite/V12_DCO_Architectural_Brief.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..08afda4984dc818076bf9b886ef3de0d92db7710
+--- /dev/null
++++ b/advanced validation suite/V12_DCO_Architectural_Brief.md        
+@@ -0,0 +1,72 @@
++# V12.0 Dynamic Component Orchestrator (DCO): Architectural Brief & Build Plan
++
++## 1. Context and Goals
++- **Locked Layer 1 HPC Core:** The V11.0 "HPC-SDG" pipeline (app.py + core_engine.py) is frozen as the baseline high-performance compute layer, per the Phase_4_Control_Hub_Plan baseline. It remains the authoritative simulation core and must be callable but not modified by Layer 2 orchestration logic.
++- **V12.0 Mandate:** Deliver a Dynamic Component Orchestrator that can discover, configure, and execute heterogeneous Layer 2 analysis components (e.g., HPC core wrapper, TDA analyzer, BSSN check) via a user-defined workflow instead of the hard-coded `execute_hunt()` loop.
++- **Design Principle:** Standardize component packaging via manifests so the hub UI and orchestrator can reason about I/O, dependencies, and tunable variables without bespoke code.
++
++## 2. Component Manifest Standard (component_manifest.json)
++Each component (script or service) must ship a sibling `component_manifest.json` describing its contract:
++- **Identity & Entrypoint:** `name`, `version`, `description`, `entry`: executable command or script path (relative to repo root), and optional `args_template` with tokens resolved at runtime (e.g., `{input.provenance_file}`).
++- **Standardized I/O Markers:** `inputs` and `outputs` arrays of objects like `{ "name": "provenance_file", "type": "path:json", "description": "Validator report" }`. Types align with UI validation (path:json, dir, str, int, float, bool, uri, ssh_host, etc.).
++- **Dependencies:** `requirements`: pointer to a requirements.txt or environment spec; optional `runtime`: {"python": "3.11", "cuda": "12.2"} for target constraints.
++- **Variable Controls:** `tunable_variables`: list of tunables exposed to the UI settings panel (e.g., `{ "name": "N_grid", "label": "Grid Size", "type": "int", "default": 256, "min": 32, "max": 1024 }`).
++- **Execution Class:** `execution`: {"kind": "batch|service", "target": "local|colab|ssh", "parallelism": "serial|map"} guides fleet scheduling.
++- **Health & Telemetry Hooks:** optional `status_endpoint`, `heartbeat_interval`, and `log_paths` to wire live monitoring into the dashboard.
++
++## 3. Component Discovery and Registry
++- The hub scans `/components/**/component_manifest.json` on startup and builds an in-memory registry keyed by `name` and `version`.
++- Manifests failing schema validation are rejected with surfaced errors; valid entries are cached for offline use.
++- Registry exposes query APIs to the UI (for palette listing) and to the orchestrator (for resolving I/O contracts and entrypoints during execution).
++
++## 4. Visual Pipeline UI (Add-on Canvas)
++- **Palette:** Dynamically generated list of components from the registry showing name, summary, inputs, outputs, and tunables.
++- **Canvas:** Drag-and-drop node graph where edges connect compatible I/O markers; type mismatches are blocked client-side.
++- **Settings Drawer:** Auto-generated forms from `tunable_variables` with validation; persisted per-node in the workflow definition.
++- **Workflow Serialization:** Canvas state persisted as JSON (e.g., `workflow.json`) describing nodes, tunables, connections, execution targets, and output directories. This JSON replaces the hard-coded `execute_hunt()` logic.
++- **Import/Export:** Users can load/save workflow definitions to share reproducible pipelines and allow AI-assisted authoring.
++
++## 5. Fleet Manager (Orchestrator) Responsibilities
++Given a workflow JSON, the orchestrator performs:
++1. **Validation:** Ensure all nodes reference known manifests, I/O edges are type-compatible, and required tunables are set.
++2. **Directory Provisioning:** Pre-create required paths (`mkdir -p`) for every declared `path:*` output before job launch.
++3. **Dependency Setup:** Install or verify component requirements on the target (local venv, Colab pip install, or remote SSH environment) using the manifest’s `requirements` pointer.
++4. **Execution Planning:** Resolve each node into a runnable command by substituting inputs/outputs/tunables into `args_template`; determine execution ordering via topological sort of the DAG.
++5. **Multi-Destination Dispatch:**
++   - **Local:** spawn subprocesses with live log capture.
++   - **Colab:** generate a notebook or script payload and use an authenticated channel to launch and monitor.
++   - **SSH Targets:** `ssh user@host "python <entry> ..."` with resilient retries and optional rsync/scp for artifact movement.
++6. **Monitoring & Integrity:** Stream stdout/stderr, emit structured status events (queued/running/succeeded/failed), watch `log_paths`, and verify declared outputs were produced and conform to expected types.
++7. **Recovery & Retry:** Support idempotent re-runs of failed nodes, with cached successful artifacts to avoid recomputation.
++
++## 6. Execution Lifecycle (Pipeline Runtime)
++1. Load workflow JSON and hydrate manifest details.
++2. Validate DAG and expand node parameters (including per-node execution target).
++3. Provision directories and stage configuration files (params/provenance hashes) per node.
++4. Execute nodes respecting dependencies; fan-out allowed for parallel-ready nodes, with fan-in barriers on dependent nodes.
++5. Collect status events into a central websocket/feed consumed by `index.html` dashboard; render per-node timelines and logs.
++6. On completion, emit a provenance bundle summarizing command lines, hashes, start/end times, and integrity checks.
++
++## 7. Data & Contract Governance
++- **Canonical Types:** Enforce a shared vocabulary for `type` fields (path:json, path:csv, dir, int, float, bool, uri, ssh_host) to keep UI validation and orchestrator checks consistent.
++- **Versioned Manifests:** Support `version` fields so multiple revisions of a component can coexist; the workflow JSON pins exact versions.
++- **Security:** Sandbox local executions, restrict outbound SSH targets to an allowlist, and validate inputs to prevent arbitrary command injection when resolving `args_template` tokens.
++
++## 8. Build Plan (V12.0 Delivery Roadmap)
++1. **Schema & Registry (Week 1):** Finalize manifest JSON schema, implement validator, and build registry loader with caching.
++2. **Component Adapters (Week 2):** Add manifests to existing components (HPC core wrapper, TDA analyzer, BSSN check); provide thin wrappers if entrypoints need normalization.
++3. **Workflow Model (Week 2):** Define workflow JSON structure and DAG validation with type-checked edges and topological ordering.
++4. **UI Extensions (Week 3):** Implement palette + settings drawer driven by registry, canvas drag/drop with edge validation, and workflow import/export.
++5. **Orchestrator Core (Week 4):** Implement command resolver, directory provisioning, dependency installer, and local executor with live log streaming.
++6. **Remote Targets (Week 5):** Add SSH + Colab adapters (artifact sync, auth handling), plus retry/backoff policies.
++7. **Monitoring Layer (Week 5):** Define event schema, websocket broadcaster, dashboard widgets (node status, logs, artifact existence checks).
++8. **Hardening (Week 6):** Integration tests using sample workflows, manifest conformance checks, and integrity audits (confirm declared outputs exist and match type).
++
++## 9. AI Development Synergy
++- By enforcing `component_manifest.json`, AI copilots (e.g., Aletheia) can focus on generating single, verifiable components rather than bespoke pipeline glue.
++- The manifest becomes a machine-readable contract: AI can synthesize tunables, validate I/O types, and scaffold tests to prove compliance, reducing risk of "lazy" or incorrect end-to-end builds.
++
++## 10. Expected Outcomes
++- A pluggable Layer 2 orchestration layer that can run the locked Layer 1 HPC core and future analyzers without code changes to the hub.
++- Reusable component marketplace: any script packaged with a manifest becomes a first-class node in the visual pipeline.
++- Operational visibility: centralized dashboard for status, logs, and integrity checks across local and remote fleets.

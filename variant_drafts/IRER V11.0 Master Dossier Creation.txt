@@ -1,0 +1,448 @@
+﻿IRER Project Dossier: Master Protocol & Knowledge Base (V11.0 "HPC-SDG")
+
+
+
+
+Section 1: The V10.1 Forensic Analysis: Paradox & Deadlock
+
+
+This section provides the definitive forensic analysis of the V10.1 "Long Hunt" campaign. The campaign was terminated by a critical, mission-ending failure. This failure state was twofold: the project was simultaneously operationally non-functional due to a catastrophic engineering deadlock, and scientifically invalid due to a profound paradox in its core physics model. The V11.0 "HPC-SDG" architecture is the strategic resolution to this dual failure.
+
+
+1.1 The "Stability-Fidelity Paradox": Falsification of the BSSN Geometric Law-Keeper
+
+
+The V10.1 campaign was not merely an engineering failure; it was, by design, a "profound scientific discovery".1 The "Long Hunt" successfully steered the Sourced, Non-Local Complex Ginzburg-Landau (S-NCGL) physics core toward "maximal scientific attainment," achieving a "near-perfect statistical lock-in" to the Log-Prime Spectral Attractor hypothesis with a Sum of Squared Errors (SSE) of $< 0.005$.2
+This scientific success, however, exposed a foundational contradiction. The simulation architecture employed the Baumgarte-Shapiro-Shibata-Nakamura (BSSN) numerical relativity solver as the "classical law-keeper" to validate the geometric integrity of the emergent spacetime.2 As the S-NCGL simulation achieved its highest states of physical order and fidelity, the BSSN solver, in its role as the "law-keeper," was simultaneously flagging these exact solutions as "physically impossible" and "catastrophically failing".1
+The analysis of this paradox inverted the initial interpretation. The S-NCGL physics was not unstable; rather, the simulation was actively falsifying classical General Relativity (as modeled by BSSN) as the correct gravitational framework for the S-NCGL master equation.1
+
+
+1.2 The "Geometric Crisis": Analysis of the +0.72 Correlation (PCS vs. H-Norm L2)
+
+
+This scientific falsification was quantitatively proven by the discovery of the "Geometric Crisis".2 This crisis is defined by a strong positive Pearson correlation coefficient of $+0.72$ between two critical, and supposedly oppositional, metrics 1:
+1. Scientific Fidelity (pcs_score): The Phase Coherence Score. This metric serves as the "operational analogue for the Superfluid order parameter" and is a primary measure of emergent physical order and coherence.1
+2. Geometric Instability (hamiltonian_norm_L2): The Hamiltonian Constraint Violation. This is the BSSN solver's definitive metric for geometric failure. An "explosive growth" 6 in this value indicates a solution that is "mathematically illegal" from the perspective of classical General Relativity.3
+The $+0.72$ correlation demonstrated that as the system became more physically ordered (high pcs_score), it was simultaneously becoming more geometrically illegal (high hamiltonian_norm_L2). This architectural contradiction proved a "fundamental incompatibility" 5 between the S-NCGL physics engine and the BSSN geometry engine. This "failure" was, in fact, the critical signal that the S-NCGL system obeys the laws of a different gravitational theory—DHOST scalar-tensor gravity—for which the BSSN solver is not the correct "law-keeper".2
+
+
+1.3 The "Pipeline Deadlock": Root Cause Analysis of the Orchestrator-Hunter Desynchronization (time.time() Salt)
+
+
+Concurrently with the scientific paradox, the V10.x pipeline was crippled by a catastrophic engineering failure known as the "Pipeline Deadlock" or "Stall".2 This failure was absolute, halting all R&D and preventing any further progress on the "Long Hunt" campaign.
+The root cause was a critical desynchronization flaw in the V10.x architecture's data-artifact identification logic, which violated a "fundamental principle of distributed, decoupled systems".2 In this "Old Way" architecture, a single, deterministic identifier was not shared between components. Instead, each component (e.g., the Orchestrator, the Worker worker_fmia.py, and the Validator validation_pipeline_bssn.py) was responsible for independently re-calculating a "unique" hash based on the shared parameters.2
+This process was fatally broken by the inclusion of a non-deterministic time.time() salt in the hash generation function.1
+1. At $T=1$, the Orchestrator calculated $Hash\_A$ using $salt(T=1)$.
+2. Moments later, at $T=2$, the Validator, launched as a separate process, calculated $Hash\_B$ using $salt(T=2)$.
+3. Because $salt(T=1) \neq salt(T=2)$, the resulting hashes were guaranteed to mismatch: $Hash\_A \neq Hash\_B$.2
+The Worker would correctly save its output artifact as rho_history_{Hash_A}.h5. The Validator, however, would then attempt to find and open rho_history_{Hash_B}.h5. This guaranteed FileNotFoundError resulted in a "catastrophic stall" and a total pipeline deadlock, as the Validator would wait indefinitely for a file that would never exist.1
+This "Orchestrator-Hunter Desynchronization" 1 was the primary engineering failure that mandated the V11.0 Phase 1 hotfix.
+
+
+Table 1.1: V10.1 Forensic Analysis Summary
+
+
+
+
+Failure
+	Type
+	Root Cause
+	Key Metric / Evidence
+	V11.0 Resolution Mandate
+	Pipeline Deadlock (Stall)
+	Engineering
+	Distributed, non-deterministic hash calculation using a time.time() salt.
+	Hash_A!= Hash_B, FileNotFoundError in Validator.1
+	Phase 1: Unified Hashing Mandate.4
+	Geometric Crisis (Stability-Fidelity Paradox)
+	Scientific
+	BSSN solver is axiomatically incompatible with S-NCGL physics.
+	+0.72 correlation (pcs_score vs. hamiltonian_norm_L2).2
+	Phase 2: SDG Pivot.1
+	
+
+Section 2: The V11.0 "HPC-SDG" Architectural Mandate
+
+
+The V11.0 "HPC-SDG" build plan is the definitive two-pronged resolution to the dual failures of V10.1. It consists of an immediate engineering hotfix (Phase 1) to restore operational stability, followed by a strategic scientific pivot (Phase 2) to correct the foundational physics.
+
+
+2.1 Phase 1 Hotfix: The Unified Hashing Mandate Protocol
+
+
+The primary engineering objective of V11.0 was the implementation of the Unified Hashing Mandate, the immediate hotfix for the "Pipeline Deadlock".4 This mandate fundamentally re-architected the pipeline's identification logic, establishing the orchestrator (adaptive_hunt_orchestrator.py) as the "sole source of truth" for artifact identification.1
+The "New Way" protocol is as follows 2:
+1. Central Generation: The Orchestrator generates a single, deterministic Universally Unique Identifier (UUID) (also referred to as job_uuid or config_hash). The non-deterministic time.time() salt is explicitly removed from this generation process.
+2. Central Authority Passing: This single UUID is passed as a simple string command-line argument (e.g., --config_hash) to all downstream subprocesses, specifically the Worker (worker_sncgl.py) and the Validator (validation_pipeline_v11.py).
+3. Mandated Reception: The downstream components are no longer calculating an identifier. They are receiving their target identifier. They are strictly mandated to use this received string for all file I/O operations (e.g., naming the output file rho_history_{UUID}.h5 and finding the same file rho_history_{UUID}.h5).
+This "Central Authority Passing" model replaces the "Distributed Calculation" model, guaranteeing synchronization, eliminating the FileNotFoundError, and permanently resolving the deadlock.2
+
+
+2.2 Phase 2 Strategic Pivot: Decommissioning BSSN and Commissioning the JAX-Native SDG Solver
+
+
+The second phase of V11.0 was the scientific fix for the "Geometric Crisis." This pivot resolved the Stability-Fidelity Paradox identified in the V10.1 data.1
+1. Decommissioning BSSN: The "falsified BSSN solver" 1 was formally decommissioned as the Layer 1 geometric "law-keeper." It was demoted from the core physics loop.
+2. Commissioning SDG: The new, "axiomatically correct," JAX-native "Spacetime-Density Gravity (SDG) solver" (solver_sdg.py) was commissioned as its replacement.1
+This pivot successfully achieved "Foundational Closure" 1 because the SDG solver is designed to solve for the exact scalar-tensor gravity sourced by the S-NCGL physics. It implements the correct "Emergent Metric Ansatz" 4:
+$$g_{\mu\nu} = (\rho_{vac}/\rho_s)^\alpha \eta_{\mu\nu}$$
+This equation formally and correctly couples the informational field's Spacetime Density ($\rho_s$) to the emergent spacetime geometry ($g_{\mu\nu}$), resolving the paradox.4
+
+
+2.3 The V11.0 JAX Core: A Differentiable, Computationally Tractable Pipeline
+
+
+The Phase 2 pivot provided a second, critical benefit: it solved a massive HPC performance blocker. The legacy BSSN solver was a non-native Python module, creating a "JAX 'TypeError' Blocker" 2 that broke the Just-in-Time (JIT) compilation chain. This forced JAX to re-compile the entire simulation kernel on every iteration, rendering the project "computationally intractable".2
+The new V11.0 architecture, consisting of the JAX-native worker_sncgl.py and the JAX-native solver_sdg.py, creates a unified JAX environment.4 This allows the entire co-evolution loop (S-NCGL $\leftrightarrow$ SDG) to be JIT-compiled into a "single, highly optimized XLA graph".4
+Furthermore, this fully JAX-native stack creates an "end-to-end differentiable" simulation loop. This allows the aste_hunter (the adaptive AI) to receive gradients directly from the emergent geometry, enabling it to use jax.grad to "actively learn to navigate the parameter space toward geometrically stable solutions".2 The pivot thus solved both the scientific paradox and the HPC tractability crisis.
+
+
+2.4 The V11.0 Decoupled Architecture: Layer 1 vs. Layer 2
+
+
+The V11.0 "HPC-SDG" build plan finalized the project's system topology by formally separating the architecture into two distinct layers, a prerequisite for the event-driven Control Hub 1:
+* Layer 1: The JAX-Optimized HPC Core: This layer is reserved exclusively for the essential, JIT-compiled physics loop. In V11.0, this consists of only three components: aste_hunter.py (the AI), worker_sncgl.py (the S-NCGL solver), and solver_sdg.py (the new geometric law-keeper).2
+* Layer 2: The Decoupled Secondary Analysis Suite: This layer is for all high-overhead, non-real-time, post-processing analysis. The BSSN solver was "demoted" to this layer, re-classified as a "Classical GR Benchmark." Other tools, such as Topological Data Analysis (TDA) and Quantule Classification, also reside here.1
+This separation ensures that the high-performance Layer 1 is never blocked by the slower, non-JAX analysis of Layer 2, enabling the event-driven architecture of the V11.0 Control Hub.1
+
+
+Table 2.1: V10.x vs. V11.0 Architectural Re-Allocation
+
+
+
+
+Component / Tool
+	Old Status (V10.x)
+	New Status (V11.0)
+	Rationale for Re-Allocation
+	aste_hunter.py
+	Layer 1 (HPC Core)
+	Layer 1 (HPC Core)
+	(No change, remains core AI).2
+	worker_sncgl.py
+	Layer 1 (HPC Core)
+	Layer 1 (HPC Core)
+	(No change, remains core physics).2
+	BSSN_solver.py
+	Layer 1 (HPC Core)
+	Layer 2 (Decoupled Analysis)
+	Falsified as a law-keeper. Demoted to a classical benchmark.1
+	solver_sdg.py
+	(New Component)
+	Layer 1 (HPC Core)
+	Axiomatically correct, JAX-native replacement for BSSN.4
+	validation_pipeline_v11.py
+	Layer 2 (Analysis)
+	Layer 2 (Analysis)
+	(No change, remains decoupled).1
+	TDA_Analyzer.py
+	Layer 2 (Analysis)
+	Layer 2 (Analysis)
+	High-overhead, remains decoupled scientific analysis.1
+	
+
+Section 3: V11.0 Master Protocol: The Dynamic Control Hub
+
+
+This section serves as the definitive operational and user guide for the V11.0 "HPC-SDG" suite. The Phase 3 and Phase 4 builds detailed the creation of the "Dynamic Control Hub," the persistent, web-based meta-orchestration layer that transitions the V11.0 core from a "headless" (command-line-only) tool into an observable, manageable, and robust research platform.1
+
+
+3.1 Core Architecture: The app.py Meta-Orchestrator and core_engine.py Module
+
+
+The V11.0 Control Hub architecture consists of two primary modules that separate the web interface from the blocking computation 1:
+* app.py (The Meta-Orchestrator): This is a lightweight, persistent Flask server that acts as the "Control Plane".1 Its responsibilities are threefold:
+   1. Signaler: To serve the index.html user interface and provide the core API endpoints (/api/start-hunt, /api/get-status).1
+   2. Watcher: To launch and manage a background "Watcher" thread that monitors the filesystem for results.1
+   3. State Manager: To manage the central status.json file, which acts as the "heart" of the decoupled system.1
+* core_engine.py (The Callable Module): The V11.0 adaptive_hunt_orchestrator.py script was refactored from a standalone executable into this importable Python module.1 It exposes a single, callable function: execute_hunt().1 This module represents the "Data Plane" 1 and contains the "extremely long-running, blocking process" (the Layer 1 JAX loop) that can take hours or weeks to complete.1
+
+
+3.2 Solving the "Blocking Server" Failure: Non-Blocking Execution via threading.Thread
+
+
+A critical design challenge was the "process-lifetime mismatch".1 A standard HTTP request to /api/start-hunt (which lasts seconds) cannot call execute_hunt() (which lasts weeks). A naive implementation would hold the request open, causing an "HTTP timeout" and a "502 Bad Gateway" error, rendering the UI "completely unresponsive".1
+The authoritative V11.0 architecture solves this "Blocking Server" problem using Python's native threading.Thread library 1:
+1. A user POSTs to the /api/start-hunt endpoint.1
+2. The Flask server in app.py creates a new background threading.Thread and sets its target to the core_engine.execute_hunt() function.1
+3. The server immediately calls hunt_thread.start().1
+4. The API endpoint does not wait for the thread to finish. It immediately returns a 202 Accepted status to the client, unblocking the UI.1
+This threading.Thread model was selected as architecturally superior to the V10.1 "fire-and-forget" subprocess.Popen model and the "non-viable, high-overhead" Celery/Dask model, as it keeps the long-running task inside the same application context, enabling "clean, in-memory state management".1
+
+
+3.3 Event-Driven Analysis: The ProvenanceWatcher and status.json State
+
+
+The V11.0 hub implements a "hot/cold" decoupled architecture.9 The "hot" Layer 1 (core_engine thread) never communicates directly with the "cold" Layer 2 (the Flask server/UI). The filesystem is the sole communication primitive, managed by an event-driven "Watcher".1
+1. Watcher Initialization: On server startup (python app.py), the app.py module launches the start_watcher_service() function in a separate, persistent background thread.1
+2. Filesystem Monitoring: This service uses the watchdog library to instantiate an Observer that monitors the V11_ARTIFACTS/provenance_reports directory for on_created file events.1
+3. The Event-Driven Handoff:
+   * The "Hot" core_engine thread (Layer 1) completes a simulation job and atomically writes its results artifact, provenance_{UUID}.json, to the provenance_reports directory.1
+   * The "Cold" ProvenanceWatcher thread (Layer 2) detects this on_created event.1
+   * The Watcher handler (process_provenance_file) reads the new JSON file, extracts key metrics (e.g., log_prime_sse, sdg_h_norm_l2), and updates the central status.json state file. This write operation is protected by a threading.Lock (STATUS_FILE_LOCK) to prevent race conditions.1
+   * After updating the status, the Watcher triggers the (stubbed) trigger_layer_2_analysis function, which is the designated hook for launching all decoupled secondary analysis (e.g., TDA, BSSN benchmark).1
+
+
+3.4 Operational Guide: Launching and Monitoring the V11.0 Hunt
+
+
+This protocol defines the standard user workflow for the V11.0 "HPC-SDG" suite.1
+1. Launch Server: The operator starts the entire suite from the command line:
+Bash
+python app.py
+
+2. Access Hub: The operator opens the "Dynamic Control Hub" UI in a web browser by navigating to the server's address (e.g., http://localhost:8080 or http://127.0.0.1:5000).1
+3. Start Hunt: The operator initiates the "Long Hunt" by clicking the "Start New Hunt" button. This sends a POST request to the /api/start-hunt endpoint, which launches the core_engine.execute_hunt() function in its background thread.1
+4. Monitor: The index.html "Live Analysis Dashboard" 1 (also referred to as the "Live Status" dashboard 9) automatically begins polling for results. A JavaScript setInterval function sends a GET request to the /api/get-status endpoint every 3-5 seconds.1
+5. Observe: The /api/get-status endpoint simply reads and returns the status.json file maintained by the ProvenanceWatcher thread.1 The operator observes the dashboard as it populates with live metrics (e.g., "LAST SSE," "LAST H-NORM (SDG)") from the most recently completed simulation jobs.1
+
+
+Table 3.1: V11.0 Dynamic Control Hub API Contract
+
+
+
+
+Endpoint
+	HTTP Method
+	Description
+	Key Logic / Data Source
+	/
+	GET
+	Serves the main index.html Control Hub UI.
+	render_template('index.html').1
+	/api/start-hunt
+	POST
+	Triggers a new, non-blocking hunt campaign.
+	Launches core_engine.execute_hunt() in a new threading.Thread. Returns 202 Accepted.1
+	/api/get-status
+	GET
+	Polled by the UI's JavaScript dashboard for live updates.
+	Reads and returns the contents of the status.json state file, which is written to by the ProvenanceWatcher.1
+	
+
+Table 3.2: V11.0 State Management (status.json) Schema
+
+
+
+
+Key
+	Data Type
+	Description
+	Example
+	status
+	string
+	High-level status for the entire system (Control Plane).
+	"idle", "running", "error".1
+	last_event
+	string
+	Human-readable message from the last file event (Watcher).
+	"Processed provenance_abc123.json".1
+	last_sse
+	float
+	The log_prime_sse from the last processed provenance file.
+	0.0048.1
+	last_h_norm
+	float
+	The sdg_h_norm_l2 from the last processed provenance file.
+	0.089.1
+	found_files
+	array[string]
+	A list of all artifact files discovered by the Watcher.
+	["provenance_abc123.json"].1
+	
+
+Section 4: The V12.0 Extensibility Mandate: Dynamic Component Orchestrator (DCO)
+
+
+This section provides the authoritative developer guide for all future project extensibility. The V12.0 "Dynamic Component Orchestrator" (DCO) architecture is the strategic mandate to evolve the V11.0 platform from a single-purpose tool into a general-purpose, modular, and user-driven scientific workflow engine.
+
+
+4.1 The "V11.0 Orchestration Gap": From Monolithic to Modular
+
+
+The V11.0 architecture, while stable and operational, created a new "Orchestration Gap".7 Its app.py + core_engine.py pipeline is "hard-coded," "monolithic," and "locked".7 The core_engine.py module is a single, sequential script that knows it must first run worker_sncgl.py and then run validation_pipeline_v11.py.7
+This design makes it architecturally impossible for a user to:
+   * Run only the validation pipeline on existing data.
+   * Run a TDA analysis component independently.
+   * Chain components in a novel sequence (e.g., HPC_Core $\to$ TDA_Analyzer $\to$ BSSN_Benchmark).
+The V12.0 DCO is mandated to resolve this "locked" pipeline problem by replacing the hard-coded execute_hunt() function with a dynamic workflow engine.7
+
+
+4.2 Developer Protocol: The component_manifest.json Standard
+
+
+The core of the V12.0 architecture is the component_manifest.json standard. This protocol mandates that every executable script (or "node"), including a new wrapper for the V11.0 HPC Core, must ship with a companion component_manifest.json file.10
+This manifest serves as the formal "contract" 10 that makes the component discoverable, configurable, and verifiable by the DCO. The manifest file must define the following structure 10:
+   * Identity & Entrypoint: name, version, description, and entrypoint (the relative path to the executable script, e.g., tda_analyzer.py).
+   * I/O Contract: inputs and outputs arrays. Each entry is an object (e.g., {"name": "provenance_file", "type": "path:json"}) that defines a data port. The type field (e.g., path:json, path:csv, dir, str, int) is used by the UI for type-safe "wiring".10
+   * Configuration: tunable_variables array. Each entry (e.g., {"name": "N_grid", "label": "Grid Size", "type": "int", "default": 256}) defines a parameter that the UI will use to auto-generate a settings panel for that component.10
+   * Environment: dependencies.requirements (a pointer to the component's requirements.txt file) and execution.runtime (e.g., ["local", "ssh"]).10
+This manifest standard is also the key to effective AI-assisted development (Aletheia). It transforms an ambiguous, "lazy" task ("build a TDA pipeline") into a small, verifiable, and contract-bound task ("build a single component that is V12.0-compliant").11
+
+
+4.3 The V12.0 Visual Pipeline UI
+
+
+The V12.0 DCO mandates a new UI that replaces the static V11.0 dashboard. This new UI is a "Visual Pipeline" editor 10:
+   1. Palette: The UI scans the /components directory on startup and uses the name and description fields from each manifest to dynamically populate a "Palette" of available nodes.10
+   2. Canvas: A drag-and-drop "Canvas" allows the user to visually construct a workflow (a Directed Acyclic Graph, or DAG) by "wiring" nodes together (e.g., connecting the provenance_report output of one node to the provenance_file input of another).10 The UI uses the type fields from the manifests to block incompatible connections.10
+   3. Settings Drawer: Clicking a node on the Canvas opens a "Settings Drawer," which is auto-generated by reading the tunable_variables array from that node's manifest.10
+   4. Workflow Serialization: The user's visual graph is serialized into a workflow.json file. This file is the new execution plan and replaces the monolithic core_engine.py logic.10
+
+
+4.4 The V12.0 "Fleet Manager" Orchestrator
+
+
+The V12.0 backend is a true "Fleet Manager" or "Orchestrator Core" 10 that executes the workflow.json defined by the user. Its responsibilities include:
+   * Planning: Reading the workflow.json and performing a topological sort of the DAG to determine the correct execution order.10
+   * Provisioning: Automatically performing prerequisite tasks, such as mkdir -p for all required output directories and installing component-specific dependencies (from requirements.txt) on the target machine.10
+   * Dispatch: Resolving args_template tokens and dispatching the job to the user-selected destination, supporting local subprocesses, Colab instances, and remote ssh targets.10
+   * Monitoring: Streaming logs and status events from all active components into a central dashboard for live monitoring and integrity checks.10
+
+
+Table 4.1: The V12.0 component_manifest.json Schema (Developer Protocol)
+
+
+
+
+Key
+	Type
+	Description
+	Example Value
+	id
+	string
+	Unique machine-readable identifier for the registry.
+	"tda_analyzer_v1" 11
+	name
+	string
+	Human-readable name for the UI Palette.
+	"TDA / Quantule Analysis" 10
+	version
+	string
+	Version string for dependency and workflow pinning.
+	"1.2.0" 10
+	entrypoint
+	string
+	Relative path to the component's executable script.
+	"components/tda_analyzer/tda_analyzer.py" 10
+	inputs
+	array[object]
+	Array of input data contracts. Type-checked by the UI.
+	[{"name": "provenance_file", "type": "path:json"}] 10
+	outputs
+	array[object]
+	Array of output data contracts. Used for path generation.
+	[{"name": "tda_report", "type": "path:json"}] 10
+	tunable_variables
+	array[object]
+	Defines parameters to auto-generate a UI settings form.
+	`` 10
+	dependencies
+	object
+	Pointers to environment/requirement files for the Orchestrator.
+	{"requirements": "requirements.txt"} 10
+	execution
+	object
+	Defines target runtimes and argument templates.
+	{"runtime": ["local", "ssh"], "args": ["--uuid", "{job_uuid}"]} 10
+	
+
+Section 5: Appendix: Core Scientific Knowledge Base
+
+
+This section serves as the project's canonical scientific glossary and reference, consolidating foundational R&D knowledge.
+
+
+5.1 The S-NCGL (Sourced, Non-Local Complex Ginzburg-Landau) Master Equation
+
+
+The S-NCGL master equation is the "core physics" for the entire IRER simulation framework.12 It is a highly non-linear partial differential equation modeling the dynamics of the fundamental informational substrate. This equation is axiomatically derived from the canonical Lagrangian $\mathcal{L}_{\text{FMIA}}$ ("Field-Native Matter & Information").1
+Key terms of the S-NCGL equation include:
+   * Linear Growth ($\epsilon$): The instability driver, representing spontaneous symmetry breaking (SSB).4
+   * Quartic "Sombrero" Potential: A potential term $V(\Psi^\dagger\Psi) = -\mu^2(\Psi^\dagger\Psi) + \lambda(\Psi^\dagger\Psi)^2$, which defines the stable states of the field.13
+   * Non-Local Interaction Term ($\mathcal{L}_{\text{non-local}}$): A unique feature of the theory that mediates system-wide correlations and formalizes the "splash" effect.12
+
+
+5.2 The Falsifiable Prediction: The Log-Prime Spectral Attractor ($k \approx \ln(p)$)
+
+
+The "Log-Prime Spectral Attractor" hypothesis is the primary falsifiable prediction of the IRER framework.12 This theory posits that stable, emergent structures (termed "Quantules") will self-organize into spectral resonance modes corresponding to the natural logarithms of prime numbers.12
+The mathematical relationship is:
+
+
+$$k \approx \ln(p)$$
+
+
+...where $k$ is the observed spectral peak and $p$ is a prime number (e.g., $\ln(2), \ln(3), \ln(5), \dots$).12
+The Sum of Squared Errors (log_prime_sse) is the definitive metric for scientific validity. It calculates the statistical distance between the spectral peaks generated by the simulation and these fixed theoretical $\ln(p)$ targets.12 A low SSE signifies a "near-perfect statistical lock-in" to the attractor and, therefore, validation of the theory.2
+
+
+5.3 Project Benchmarks: The "Gold Standard" SSE
+
+
+A critical clarification for the project's scientific goals is the distinction between the achieved SSE and the target SSE.
+   * V10.1 Achieved Attainment: The V10.1 "Long Hunt" campaign, before its termination, successfully identified a "Resonant Sweet Spot" and achieved "maximal scientific attainment" with a Best SSE of $< 0.005$.2
+   * "Gold Standard" Benchmark: The project's ultimate scientific goal is to achieve the "gold standard" benchmark, an SSE of $\approx 0.00087$. This target is anchored in "gold standard" results from the original RhoSim engine and serves as the definitive target for "closing" the scientific gap.3
+The V11.0 "HPC-SDG" campaign's objective is to resume the hunt from the proven < 0.005 "sweet spot" and leverage the new, stable, and differentiable architecture to push toward the 0.00087 "gold standard" target.
+
+
+Table 5.1: Project Glossary and Key Metrics
+
+
+
+
+Term
+	Definition
+	Project Role
+	IRER
+	Informational Resonance Emergence Reality.
+	The foundational physics framework and theory of emergent reality.12
+	S-NCGL
+	Sourced, Non-Local Complex Ginzburg-Landau.
+	The master equation modeling the "core physics" of the informational substrate.2
+	SDG
+	Spacetime-Density Gravity.
+	The V11.0 JAX-native, axiomatically correct emergent gravity solver.1
+	BSSN
+	Baumgarte-Shapiro-Shibata-Nakamura.
+	The V10.x classical GR solver, falsified by the "Geometric Crisis".1
+	Log-Prime Spectral Attractor
+	$k \approx \ln(p)$
+	The primary falsifiable prediction of the IRER theory.2
+	log_prime_sse
+	Sum of Squared Errors.
+	The definitive metric for scientific fidelity, measuring distance to the Log-Prime Attractor.2
+	pcs_score
+	Phase Coherence Score.
+	Metric for physical order; "operational analogue for the Superfluid order parameter".1
+	hamiltonian_norm_L2
+	Hamiltonian Constraint Violation (BSSN).
+	The V10.x metric for geometric instability. High value = geometric failure.2
+	sdg_h_norm_l2
+	Hamiltonian Constraint Violation (SDG).
+	The V11.0 metric for geometric instability, aligned with the correct SDG solver.1
+	Quantule
+	N/A
+	The stable, localized emergent structures (e.g., $Q\alpha, Q\theta$) predicted by the theory.12
+	Unified Hashing Mandate
+	N/A
+	The V11.0 Phase 1 hotfix establishing a central UUID authority to solve the "Pipeline Deadlock".1
+	DCO
+	Dynamic Component Orchestrator.
+	The V12.0 modular workflow architecture, based on the component_manifest.json standard.7
+	Works cited
+   1. Dynamic Control Hub Code Generation
+   2. IRER V11.0 Architectural Brief
+   3. R&D Progress (consolidated responses)
+   4. IRER V11.0 HPC-SDG Code Generation
+   5. R&D Alignment with IRER Gaps, https://drive.google.com/open?id=1PyG6tKf6R1nkUGU8KkR93ZnXDLrbN9aBMgKVBUA-IgY
+   6. Debugging IRER's Evolving Physics, https://drive.google.com/open?id=1b34WhTyf-C_cMzDuwxugxz1KmSM10oBaT6i0mfdulFg
+   7. V12.0 DCO Architecture and Build Plan, https://drive.google.com/open?id=1M8d5abPjTSywy2IDgNDT4YKLQVhVELfq2pjF7_92TvQ
+   8. IRER Repository Analysis and Synthesis, https://drive.google.com/open?id=1fLV2aYuAyi7Jz2DTPDToYh68q_O_A-2YwL-plNer5zQ
+   9. codex: Build Dynamic Control Hub components
+   10. codex: Implement Dynamic Component Orchestrator
+   11. codex: Generate V12.0 Dynamic Component Orchestrator plan
+   12. IRER V10.1 Synthesis and Implementation, https://drive.google.com/open?id=1q4GXVjcnmveEF5XD0Fg3zqbYwwMwXjWcSFiIKY-_2M4
+   13. IRER Project Progress and Next Steps, https://drive.google.com/open?id=1aLMbFmOPuIC1noFe1I5dvP1nH3pVOACeGspgqhw0zms
+   14. sprint 3 start, https://drive.google.com/open?id=1hh_SsZIkbPjitZiGveMzbR0V8FwEeZOnzSOTO_mi_Sw
+   15. Debugging IRER's Evolving Physics, https://drive.google.com/open?id=14WqzudKpY64oY07pUrnfHogZSUH_KjjhEPNF0YjXRg4

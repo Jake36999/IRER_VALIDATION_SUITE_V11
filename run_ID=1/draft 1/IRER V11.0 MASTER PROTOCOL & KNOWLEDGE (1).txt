@@ -1,0 +1,838 @@
+IRER V11.0 MASTER PROTOCOL & KNOWLEDGE BASE
+
+Version: 1.0
+Status: Finalized, Build-Ready
+Classification: Internal R&D (Solo)
+
+Overview: The "Locked" Architecture
+
+This document is the single source of truth for the IRER V11.0 "HPC-SDG" build. It consolidates all R&D, bug reports, and strategic pivots into one actionable plan.
+
+The project has completed its R&D phase and has a "locked" architecture. The goal is no longer discovery of how to build the system, but the implementation of the final, stable system.
+
+This plan authorizes the build of the V11.0 "Dynamic Control Hub" [cite: Phase 4_ Dynamic Control Hub Report.pdf, Dynamic Control Hub Code Generation], which consists of:
+
+A "Hotfixed" Pipeline: Solves the "Stall" bug [cite: Debugging IRER's Evolving Physics].
+
+A "Pivoted" Core: Replaces the failed BSSN solver with the correct SDG solver [cite: IRER V11.0 Architectural Brief].
+
+A "Decoupled" Hub: A web-based "Control Plane" that separates the HPC core from the analysis layer [cite: codex: Build Dynamic Control Hub components].
+
+SECTION 1: THE BUILD PLAN (THE "HOW")
+
+This is the 3-phase build plan to create the final, runnable V11.0 suite in a Colab environment.
+
+Phase 1: Pipeline Stabilization (The "Hotfix")
+
+Goal: Fix the "A-B-A Desynchronization" deadlock [cite: Debugging IRER's Evolving Physics, combined review docs].
+
+Action: Implement the "Unified Hashing Mandate" [cite: IRER V11.0 HPC-SDG Code Generation].
+
+Steps:
+
+Modify adaptive_hunt_orchestrator.py: This script (which will be refactored into core_engine.py) is now the only component that generates a hash. It will generate a job_uuid = str(uuid.uuid4()).
+
+Pass the UUID: This job_uuid must be passed as a command-line argument to both worker_sncgl_sdg.py and validation_pipeline.py.
+
+Modify validation_pipeline.py: Remove all hashlib logic. It must receive the job_uuid via argparse and use it to name the output file (e.g., provenance_{job_uuid}.json).
+
+Phase 2: Core Physics Upgrade (The "SDG Pivot")
+
+Goal: Implement the correct physics that solves the "Stability-Fidelity Paradox" [cite: R&D Progress (consolidated responses)].
+
+Action: Decommission the BSSN solver and implement the S-NCGL + SDG coupled system [cite: IRER V11.0 Architectural Brief].
+
+Steps:
+
+Implement S-NCGL EOM: The worker_sncgl_sdg.py script's JAX loop will be updated to solve the finalized "S-NCGL Master Equation" [cite: Deriving S-NCGL Master Equation Axiomatically].
+
+Implement SDG Solver: This same JAX loop will also run the new "SDG Solver" (the JAX-native "law-keeper"). The physics (S-NCGL) and geometry (SDG) will "co-evolve" in a single, coupled PDE system [cite: Finalizing IRER's Coupled PDE System].
+
+Modify Validator: The validation_pipeline.py script's calculate_..._metrics function will be updated. It will no longer check for the BSSN H-Norm L2. It will instead calculate the new sdg_h_norm_l2 metric from the worker's output artifact.
+
+Phase 3: Control Hub Integration (The "Dynamic Hub")
+
+Goal: Build the web-based, non-blocking "Control Plane" [cite: codex: Build Dynamic Control Hub components].
+
+Action: Create the app.py, core_engine.py, and index.html files.
+
+Steps:
+
+Refactor Orchestrator: Rename adaptive_hunt_orchestrator.py to core_engine.py. Convert its main() logic into a callable function: def execute_hunt():.
+
+Build the Server (app.py): Create a new Flask server (app.py). This server will have:
+
+An /api/start-hunt endpoint that launches core_engine.execute_hunt() in a new background thread (this is the non-blocking fix).
+
+A "Watcher" thread that monitors the provenance_reports directory.
+
+An /api/get-status endpoint that reads a status.json file (which the Watcher updates).
+
+Build the UI (templates/index.html): Create a simple HTML dashboard. This UI will have a "Start Hunt" button (calls /api/start-hunt) and a "Live Status" panel (polls /api/get-status).
+
+SECTION 2: THE KNOWLEDGE BASE (THE "WHY")
+
+This is the project's institutional memory.
+
+Core Theory: IRER (Informational Resonance & Emergence of Reality)
+
+What it is: Your (Jake McIntosh's) theory of emergent reality [cite: Declaration of Intellectual Provenance v9.pdf]. It posits that physics emerges from a non-local informational substrate.
+
+The "Holy Grail": To prove this, the simulation must find the "Log-Prime Spectral Attractor," a specific energy signature (k≈ln(p)) [cite: R&D Progress (consolidated responses), Query, 73, 2, 281].
+
+The Models:
+
+FMIA: A simplified, stable "control" model.
+
+S-NCGL: The true, complex, non-local model of IRER [cite: Deriving S-NCGL Master Equation Axiomatically].
+
+Key Discovery: The "Stability-Fidelity Paradox" (aka "The Geometric Crisis")
+
+What happened: The S-NCGL hunt was a scientific success. The Hunter AI found "ultra-low SSE" solutions that matched the Log-Prime Spectral Attractor [cite: R&D Progress (consolidated responses)].
+
+The Paradox: These "better science" solutions had a +0.72 correlation with geometric instability (H-Norm L2) [cite: R&D Progress (consolidated responses)].
+
+The Insight: This "broke" the BSSN solver. It proved that classical physics (BSSN) is mathematically incapable of modeling your non-local IRER theory (S-NCGL) [cite: IRER: Validating Science, Falsifying Physics]. This was a discovery, not a failure.
+
+The Resolution: The SDG Solver, a new, JAX-native "law-keeper" designed for this non-classical physics [cite: IRER V11.0 Architectural Brief].
+
+Key Blocker: The "A-B-A Desynchronization" (aka "The Stall")
+
+What happened: The whole pipeline would "stall" or "deadlock" [cite: Debugging IRER's Evolving Physics].
+
+The Bug: A "hash mismatch." The Orchestrator (Hash A) and Validator (Hash B) calculated hashes independently. The Hunter (looking for Hash A) couldn't find the file provenance_A.json and (correctly) reported a FileNotFoundError.
+
+The "False Positive": This was a "false positive" because the data did exist (as provenance_B.json) [cite: combined review docs]. The bug wasn't missing data; it was a pipeline synchronization failure.
+
+The Resolution: The "Unified Hashing Mandate" (Phase 1 of this build plan) [cite: IRER V11.0 HPC-SDG Code Generation].
+
+SECTION 3: FAQ & EXPECTATION GUIDE (THE "HOW-TO")
+
+This is the user manual for the V11.0 suite.
+
+Q: How do I run the final V11.0 suite?
+A: You do not use the old !python run.py hunt command.
+
+Ensure all V11.0 files (from the build plan) are present.
+
+Create the templates directory: !mkdir templates
+
+Move index.html into it: !mv index.html templates/
+
+Run the server: !python app.py
+
+Open the public URL (e.g., the ngrok or Colab URL) in your browser. The index.html file is your new Control Hub.
+
+Q: How do I start a hunt?
+A: Use the web UI. You can (optionally) set the number of generations and population, then click the "Start New Hunt" button. The UI will update to "Hunt Running..." but the page will not freeze [cite: codex: Build Dynamic Control Hub components].
+
+Q: How do I know it's working (or if it stalled)?
+A: Watch the "Live Analysis Dashboard" in the UI.
+
+The "LAST EVENT" field will update in real-time (e.g., "Analyzed {job_uuid}...") as the "Watcher" thread finds new provenance.json files.
+
+The "LAST SSE" and "LAST H-NORM" fields will show the metrics from the latest job.
+
+If the "LAST EVENT" stops updating for a long time, the JAX Core may be stalled. You can then check the core_engine_hunt.log file for errors.
+
+Q: What does "success" look like for this V11.0 run?
+A: Two things:
+
+Engineering Success: The hunt runs for all generations and does not stall. The "Watcher" finds all provenance.json files. This proves the "Unified Hashing Mandate" worked.
+
+Scientific Success: The "Final Best Run" JSON at the end of the hunt shows both an "ultra-low SSE" (e.g., < 0.01) and an "ultra-low sdg_h_norm_l2" (e.g., < 0.001). This proves the "Stability-Fidelity Paradox" is broken and the S-NCGL+SDG core is the correct, stable model of IRER.
+
+Q: How do I use this data for my "real-world" metasurface experiments?
+A: When the hunt is "Completed," the "Final Best Run" box in your UI will contain the JSON for the best run. The sncgl_params from that JSON are your "golden parameters." These are the instructions you use to configure your "Collapse Sculpting Chamber" (CSC-1) and "LOM Stack" [cite: Query, 73, 2, 281].
+
+Q: How do I use Aletheia to build new components for this?
+A: This V11.0 build is "locked," but you can (and should) start building V12.0-compliant analysis tools (Layer 2).
+
+Task Aletheia: "Aletheia, build a Python script run_tda_analysis.py that takes a provenance.json file as an argparse input and prints TDA metrics to the console."
+
+Your Job (V12.0 Prep): You would then create a component_manifest.json for it, as we planned in the V12.0 DCO brief [cite: codex: Generate V12.0 Dynamic Component Orchestrator plan]. This prepares you for the next architectural leap.
+
+
+
+hpc core manifest: 
+
+
+{
+  "name": "SNCGL-SDG HPC Core",
+  "version": "12.0.0",
+  "description": "The 'locked' V11.0 JAX-based HPC core, refactored as a V12.0-compliant component. Runs a full evolutionary hunt.",
+  "script_to_run": "hpc_core.py",
+  "dependencies": "requirements.txt",
+  "inputs": [
+    {
+      "name": "job_uuid",
+      "type": "string:uuid",
+      "description": "Unique ID for this pipeline run, generated by the DCO."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "final_ledger",
+      "type": "path:csv",
+      "description": "The final simulation_ledger.csv from the hunt."
+    },
+    {
+      "name": "best_run_provenance",
+      "type": "path:json",
+      "description": "The provenance.json of the single best run."
+    }
+  ],
+  "tunable_variables": [
+    {
+      "name": "num_generations",
+      "label": "Generations",
+      "type": "int",
+      "default": 10
+    },
+    {
+      "name": "population_size",
+      "label": "Population Size",
+      "type": "int",
+      "default": 10
+    }
+  ]
+}
+
+IRER dynamic control hub: 
+%%writefile templates/index.html
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRER V11.0 | Dynamic Control Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        /* Simple loading spinner */
+        .spinner {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans p-4 md:p-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold text-cyan-400">IRER V11.0 Control Hub</h1>
+        <p class="text-gray-400 mb-6">"HPC-SDG" Core | Dynamic Analysis Layer</p>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <!-- Column 1: Control & Status -->
+            <div class="lg:col-span-1 flex flex-col gap-6">
+                
+                <!-- Layer 1 Control -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Layer 1: HPC Core Control</h2>
+                    <form id="hunt-form">
+                        <div class="mb-4">
+                            <label for="generations" class="block text-sm font-medium text-gray-400">Generations</label>
+                            <input type="number" id="generations" name="generations" placeholder="Default: 10 (from settings.py)"
+                                   class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm p-2">
+                        </div>
+                        <div class="mb-4">
+                            <label for="population" class="block text-sm font-medium text-gray-400">Population Size</label>
+                            <input type="number" id="population" name="population" placeholder="Default: 10 (from settings.py)"
+                                   class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm p-2">
+                        </div>
+                        <button type="submit" id="start-hunt-btn" 
+                                class="w-full flex justify-center items-center bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50">
+                            <span id="btn-text">Start New Hunt</span>
+                            <div id="btn-spinner" class="spinner w-5 h-5 border-4 border-t-cyan-600 border-gray-200 rounded-full ml-3 hidden"></div>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Overall Status -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Live Hunt Status</h2>
+                    <div id="hunt-status" class="text-lg font-medium text-gray-300">Idle</div>
+                    <div class="mt-4 bg-gray-700 p-4 rounded-lg">
+                        <h3 class="text-sm font-medium text-gray-400">LAST EVENT</h3>
+                        <p id="status-event" class="text-xl font-bold text-white truncate">-</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Column 2: Live Data & Logs -->
+            <div class="lg:col-span-2 flex flex-col gap-6">
+
+                <!-- Layer 2 Visualization -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Layer 2: Live Analysis Dashboard</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">LAST SSE (FIDELITY)</h3>
+                            <p id="status-sse" class="text-2xl font-bold text-emerald-400">-</loc>
+                        </div>
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">LAST H-NORM (STABILITY)</h3>
+                            <p id="status-h-norm" class="text-2xl font-bold text-amber-400">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Final Result -->
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Final Best Run (JSON)</h2>
+                    <pre id="provenance-box" class="w-full bg-gray-900 text-sm text-emerald-300 p-4 rounded-md overflow-x-auto h-48">{ "status": "Waiting for hunt to complete..." }</pre>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Get All DOM Elements ---
+        const huntForm = document.getElementById('hunt-form');
+        const startBtn = document.getElementById('start-hunt-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+        
+        const huntStatus = document.getElementById('hunt-status');
+        const statusEvent = document.getElementById('status-event');
+        const statusSse = document.getElementById('status-sse');
+        const statusHNorm = document.getElementById('status-h-norm');
+        const provenanceBox = document.getElementById('provenance-box');
+
+        let isPolling = false;
+        let pollInterval;
+
+        // --- Layer 1 Control Logic ---
+        huntForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            
+            const payload = {
+                num_generations: Number(document.getElementById('generations').value) || null,
+                population_size: Number(document.getElementById('population').value) || null,
+            };
+
+            setButtonLoading(true, 'Starting...');
+
+            try {
+                const response = await fetch('/api/start-hunt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (response.status === 202) {
+                    huntStatus.textContent = 'Hunt Started. Polling for status...';
+                    setButtonLoading(true, 'Hunt Running...');
+                    startPolling();
+                } else if (response.status === 409) {
+                    const data = await response.json();
+                    huntStatus.textContent = data.message;
+                    setButtonLoading(true, 'Hunt Running...'); // Already running
+                    startPolling();
+                } else {
+                    const data = await response.json();
+                    huntStatus.textContent = data.message || 'Error starting hunt.';
+                    setButtonLoading(false);
+                }
+            } catch (error) {
+                huntStatus.textContent = 'Error: Could not connect to server.';
+                setButtonLoading(false);
+            }
+        });
+
+        // --- Layer 2 Visualization Logic ---
+        function setButtonLoading(isLoading, text = 'Start New Hunt') {
+            startBtn.disabled = isLoading;
+            btnText.textContent = text;
+            if (isLoading) {
+                btnSpinner.classList.remove('hidden');
+            } else {
+                btnSpinner.classList.add('hidden');
+            }
+        }
+
+        function startPolling() {
+            if (isPolling) return;
+            isPolling = true;
+            pollInterval = setInterval(updateStatus, 3000); // Poll every 3 seconds
+            updateStatus(); // Run immediately
+        }
+
+        function stopPolling() {
+            if (!isPolling) return;
+            isPolling = false;
+            clearInterval(pollInterval);
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/get-status');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+
+                // Update status text
+                huntStatus.textContent = data.hunt_status || 'Idle';
+                statusEvent.textContent = data.last_event || '-';
+                statusSse.textContent = data.last_sse || '-';
+                statusHNorm.textContent = data.last_h_norm || '-';
+                
+                // Update final result box
+                if (data.final_result && Object.keys(data.final_result).length > 0) {
+                    provenanceBox.textContent = JSON.stringify(data.final_result, null, 2);
+                } else {
+                    provenanceBox.textContent = `{ "status": "${data.hunt_status}" }`;
+                }
+
+                // Stop polling if hunt is done or errored
+                if (data.hunt_status === 'Completed' || data.hunt_status.startsWith('Error')) {
+                    stopPolling();
+                    setButtonLoading(false, 'Start New Hunt');
+                } else if (data.hunt_status === 'Running') {
+                    setButtonLoading(true, 'Hunt Running...');
+                } else {
+                    // Idle state
+                    stopPolling();
+                    setButtonLoading(false, 'Start New Hunt');
+                }
+
+            } catch (error) {
+                huntStatus.textContent = 'Offline';
+                statusEvent.textContent = 'Error connecting to server.';
+                stopPolling();
+                setButtonLoading(false, 'Start New Hunt');
+            }
+        }
+
+        // Initial call on page load to check status
+        updateStatus();
+        
+    </script>
+</body>
+</html>
+```
+
+
+
+v11 refactore core : 
+%%writefile core_engine.py
+"""
+core_engine.py
+CLASSIFICATION: Core Engine (IRER V11.0)
+GOAL: Refactored orchestrator, now a callable module.
+      This is the 'locked' HPC core.
+"""
+
+import os
+import json
+import subprocess
+import sys
+import uuid
+import time
+import logging
+import settings
+import aste_hunter # Assumes aste_hunter.py is in the same directory
+
+# --- THIS IS THE KEY REFACTOR ---
+# The old `main()` function is renamed `execute_hunt()`
+def execute_hunt(num_generations, population_size):
+    """
+    This is the refactored main() function.
+    It's now called by app.py in a background thread.
+    It returns the final "best run" dictionary on completion.
+    """
+    
+    # --- Centralized Logging ---
+    # This configures logging for *this thread*.
+    # It logs to the *same file* as the app.py server.
+    log = logging.getLogger() # Get the root logger
+    log.info("--- [CoreEngine] V11.0 HUNT EXECUTION STARTED ---")
+    
+    # --- 1. Setup ---
+    log.info("[CoreEngine] Ensuring I/O directories exist...")
+    os.makedirs(settings.CONFIG_DIR, exist_ok=True)
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    os.makedirs(settings.PROVENANCE_DIR, exist_ok=True)
+    
+    hunter = aste_hunter.Hunter(ledger_file=settings.LEDGER_FILE)
+
+    start_gen = hunter.get_current_generation()
+    end_gen = start_gen + num_generations
+    log.info(f"[CoreEngine] Starting Hunt: {num_generations} generations (from {start_gen} to {end_gen-1})")
+
+    # --- 2. Main Evolutionary Loop ---
+    for gen in range(start_gen, end_gen):
+        log.info(f"--- [CoreEngine] STARTING GENERATION {gen} ---")
+        
+        parameter_batch = hunter.get_next_generation(population_size)
+        
+        jobs_to_run = []
+        jobs_to_register = []
+
+        for phys_params in parameter_batch:
+            # --- HOTFIX: UNIFIED HASHING MANDATE ---
+            job_uuid = str(uuid.uuid4())
+            
+            full_params = {
+                settings.HASH_KEY: job_uuid, # Use UUID as the single hash source
+                "global_seed": random.randint(0, 2**32 - 1),
+                "simulation": {"N_grid": 32, "T_steps": 200}, # Example params
+                "sncgl_params": phys_params
+            }
+
+            params_filepath = os.path.join(settings.CONFIG_DIR, f"config_{job_uuid}.json")
+            with open(params_filepath, 'w') as f:
+                json.dump(full_params, f, indent=2)
+
+            jobs_to_run.append({"job_uuid": job_uuid, "params_filepath": params_filepath})
+
+            ledger_entry = {
+                settings.HASH_KEY: job_uuid,
+                "generation": gen,
+                **phys_params
+            }
+            jobs_to_register.append(ledger_entry)
+
+        hunter.register_new_jobs(jobs_to_register)
+
+        # --- 3. Execute Batch Loop (Worker + Validator) ---
+        job_hashes_completed = []
+        for job in jobs_to_run:
+            # This is the "Layer 1" JAX/HPC loop.
+            if run_simulation_job(job["job_uuid"], job["params_filepath"]):
+                job_hashes_completed.append(job["job_uuid"])
+
+        # --- 4. Ledger Step (Cycle Completion) ---
+        log.info(f"[CoreEngine] GENERATION {gen} COMPLETE. Processing {len(job_hashes_completed)} results...")
+        hunter.process_generation_results(settings.PROVENANCE_DIR, job_hashes_completed)
+        
+        best_run = hunter.get_best_run()
+        if best_run:
+            log.info(f"[CoreEngine] Best Run So Far: {best_run[settings.HASH_KEY][:8]}... (Fitness: {best_run.get('fitness', 0):.4f})")
+
+    log.info("--- [CoreEngine] ALL GENERATIONS COMPLETE ---")
+    
+    final_best_run = hunter.get_best_run()
+    if final_best_run:
+        log.info(f"Final Best Run: {final_best_run[settings.HASH_KEY]}")
+        return final_best_run
+    else:
+        log.info("No successful runs completed.")
+        return {"error": "No successful runs completed."}
+
+
+def run_simulation_job(job_uuid: str, params_filepath: str) -> bool:
+    """
+    This is the *exact* same function from adaptive_hunt_orchestrator.py.
+    It runs the Layer 1 JAX/HPC loop.
+    """
+    log = logging.getLogger() # Get the root logger
+    log.info(f"--- [CoreEngine] STARTING JOB {job_uuid[:10]}... ---")
+    
+    # --- 1. Execute Worker (worker_sncgl_sdg.py) ---
+    worker_cmd = [
+        sys.executable, settings.WORKER_SCRIPT,
+        "--params", params_filepath,
+        "--job_uuid", job_uuid
+    ]
+    try:
+        # Note: We set a timeout (e.g., 10 minutes)
+        worker_result = subprocess.run(worker_cmd, capture_output=True, text=True, check=True, timeout=600)
+        log.info(f"  [CoreEngine] <- Worker OK for {job_uuid[:10]}")
+    except subprocess.CalledProcessError as e:
+        log.error(f"  [CoreEngine] WORKER FAILED: {job_uuid[:10]}. STDERR: {e.stderr}")
+        return False
+    except subprocess.TimeoutExpired:
+        log.error(f"  [CoreEngine] WORKER TIMED OUT: {job_uuid[:10]}")
+        return False
+    except FileNotFoundError:
+        log.error(f"  [CoreEngine] Worker script not found: {settings.WORKER_SCRIPT}")
+        return False
+    
+    # --- 2. Execute Validator (validation_pipeline.py) ---
+    validator_cmd = [
+        sys.executable, settings.VALIDATOR_SCRIPT,
+        "--job_uuid", job_uuid, # This is the "Unified Hashing Mandate"
+    ]
+    try:
+        # Validator should be fast (e.g., 5 min timeout)
+        validator_result = subprocess.run(validator_cmd, capture_output=True, text=True, check=True, timeout=300)
+        log.info(f"  [CoreEngine] <- Validator OK for {job_uuid[:10]}")
+    except subprocess.CalledProcessError as e:
+        log.error(f"  [CoreEngine] VALIDATOR FAILED: {job_uuid[:10]}. STDERR: {e.stderr}")
+        return False
+    except subprocess.TimeoutExpired:
+        log.error(f"  [CoreEngine] VALIDATOR TIMED OUT: {job_uuid[:10]}")
+        return False
+    except FileNotFoundError:
+        log.error(f"  [CoreEngine] Validator script not found: {settings.VALIDATOR_SCRIPT}")
+        return False
+        
+    log.info(f"--- [CoreEngine] JOB SUCCEEDED {job_uuid[:10]} ---")
+    return True
+
+# This file is now a module, so the `if __name__ == "__main__":` block
+# is removed. `app.py` is the new entrypoint.
+
+
+
+v11 meta orchestrator: 
+%%writefile app.py
+"""
+app.py
+CLASSIFICATION: Meta-Orchestrator (IRER V11.0 Control Plane)
+GOAL: Runs a persistent Flask server to act as the "Dynamic Control Hub."
+      This build is based on the V11.0 "Hotfix" architecture.
+"""
+
+import os
+import time
+import json
+import logging
+import threading
+import subprocess # We need this for the watcher's Layer 2 calls
+from flask import Flask, render_template, jsonify, request, send_from_directory
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+# --- Import the refactored Core Engine ---
+# This assumes adaptive_hunt_orchestrator.py has been renamed to core_engine.py
+# and implements the "Unified Hashing Mandate"
+try:
+    import core_engine
+    import settings
+except ImportError:
+    print("FATAL: core_engine.py or settings.py not found. Run the refactor first.")
+    # Exit or provide a grace period for files to be written
+    # sys.exit(1) 
+
+# --- Global State & Configuration ---
+app = Flask(__name__)
+
+# --- Centralized Logging ---
+# We will log to a file, as 'print' statements are lost by daemon threads.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
+    handlers=[
+        logging.FileHandler("control_hub.log"),
+        logging.StreamHandler() # Also print to console
+    ]
+)
+
+# --- Configuration (from V11.0 plan) ---
+PROVENANCE_DIR = settings.PROVENANCE_DIR
+STATUS_FILE = "hub_status.json"
+HUNT_LOG_FILE = "core_engine_hunt.log"
+
+# --- Global State ---
+# This simple lock prevents two hunts from being started.
+HUNT_RUNNING_LOCK = threading.Lock()
+# This global variable will be set to True when a hunt is active.
+# A more robust system would check if the thread is alive.
+g_hunt_in_progress = False
+
+
+# --- 1. The "Watcher" (Layer 2 Trigger) ---
+# This is a complex, critical component.
+class ProvenanceWatcher(FileSystemEventHandler):
+    """Watches for new provenance files and triggers Layer 2 analysis."""
+    
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        
+        # Watch for the specific file that signals a job is done
+        if event.src_path.endswith(".json") and "provenance_" in os.path.basename(event.src_path):
+            logging.info(f"Watcher: Detected new file: {event.src_path}")
+            self.trigger_layer_2_analysis(event.src_path)
+
+    def trigger_layer_2_analysis(self, provenance_file_path):
+        """
+        Stub for triggering all secondary analysis (TDA, BSSN-Check, etc.)
+        This function runs in the Watcher's thread.
+        """
+        logging.info(f"Watcher: Triggering Layer 2 analysis for {provenance_file_path}...")
+        
+        # --- STUB FOR LAYER 2 SCRIPT CALLS ---
+        # In a real system, this would call subprocesses:
+        # try:
+        #     subprocess.run(["python", "run_tda_analysis.py", "--file", provenance_file_path], check=True)
+        #     subprocess.run(["python", "run_bssn_check.py", "--file", provenance_file_path], check=True)
+        # except Exception as e:
+        #     logging.error(f"Watcher: Layer 2 script failed for {provenance_file_path}: {e}")
+        
+        # For this build, we just update the master status file
+        try:
+            with open(provenance_file_path, 'r') as f:
+                data = json.load(f)
+            
+            job_uuid = data.get(settings.HASH_KEY, "unknown_uuid")
+            metrics = data.get("metrics", {})
+            sse = metrics.get(settings.SSE_METRIC_KEY, 0)
+            h_norm = metrics.get(settings.STABILITY_METRIC_KEY, 0)
+
+            status_data = {
+                "last_event": f"Analyzed {job_uuid[:8]}...",
+                "last_sse": f"{sse:.6f}",
+                "last_h_norm": f"{h_norm:.6f}"
+            }
+            
+            self.update_status(status_data, append_file=provenance_file_path)
+
+        except Exception as e:
+            logging.error(f"Watcher: Failed to parse {provenance_file_path}: {e}")
+
+    def update_status(self, new_data, append_file=None):
+        """Safely updates the central hub_status.json file."""
+        try:
+            # Use a lock to prevent race conditions on the status file
+            with HUNT_RUNNING_LOCK:
+                current_status = {"hunt_status": "Running", "found_files": [], "final_result": {}}
+                if os.path.exists(STATUS_FILE):
+                    with open(STATUS_FILE, 'r') as f:
+                        current_status = json.load(f)
+                
+                current_status.update(new_data)
+                if append_file and append_file not in current_status["found_files"]:
+                    current_status["found_files"].append(append_file)
+                
+                with open(STATUS_FILE, 'w') as f:
+                    json.dump(current_status, f, indent=2)
+        except Exception as e:
+            logging.error(f"Watcher: Failed to update status file: {e}")
+
+def start_watcher_service():
+    """Initializes and starts the watchdog observer in a new thread."""
+    if not os.path.exists(PROVENANCE_DIR):
+        os.makedirs(PROVENANCE_DIR)
+        
+    event_handler = ProvenanceWatcher()
+    observer = Observer()
+    observer.schedule(event_handler, PROVENANCE_DIR, recursive=False)
+    observer.start()
+    logging.info(f"Watcher Service: Started monitoring {PROVENANCE_DIR}")
+    # The thread will run as long as the main app is running
+    observer.join() # This will block the thread, which is what we want
+
+# --- 2. The Core Engine Runner (Layer 1 Trigger) ---
+# This is the second complex, critical component.
+def run_hunt_in_background(num_generations, population_size):
+    """
+    This function is the target for our background thread.
+    It imports and runs the main hunt from the refactored core engine.
+    """
+    global g_hunt_in_progress
+    
+    # --- This is the key state-management step ---
+    if not HUNT_RUNNING_LOCK.acquire(blocking=False):
+        logging.warning("Hunt Thread: Hunt start requested, but lock is held. Already running.")
+        return # Another hunt is already in progress
+    
+    g_hunt_in_progress = True
+    logging.info(f"Hunt Thread: Lock acquired. Starting hunt (Gens: {num_generations}, Pop: {population_size}).")
+    
+    try:
+        # Update status to "Running"
+        with open(STATUS_FILE, 'w') as f:
+            json.dump({"hunt_status": "Running", "found_files": [], "final_result": {}}, f, indent=2)
+
+        # --- This is the key call to the refactored module ---
+        # We pass the parameters from the UI to the core engine
+        final_run = core_engine.execute_hunt(num_generations, population_size)
+        
+        logging.info("Hunt Thread: `execute_hunt()` completed.")
+        
+        # Update status to "Completed"
+        with open(STATUS_FILE, 'w') as f:
+            json.dump({"hunt_status": "Completed", "found_files": [], "final_result": final_run}, f, indent=2)
+
+    except Exception as e:
+        logging.error(f"Hunt Thread: CRITICAL FAILURE: {e}")
+        with open(STATUS_FILE, 'w') as f:
+            json.dump({"hunt_status": f"Error: {e}", "found_files": [], "final_result": {}}, f, indent=2)
+    finally:
+        # --- This is the key state-management step ---
+        g_hunt_in_progress = False
+        HUNT_RUNNING_LOCK.release()
+        logging.info("Hunt Thread: Lock released. Hunt finished.")
+
+# --- 3. Flask API Endpoints (The Control Hub) ---
+@app.route('/')
+def index():
+    """Serves the main interactive HTML hub."""
+    return render_template('index.html')
+
+@app.route('/api/start-hunt', methods=['POST'])
+def api_start_hunt():
+    """
+    API endpoint to start the hunt in a non-blocking background thread.
+    This is the explicit fix for the "blocking server" failure.
+    """
+    global g_hunt_in_progress
+    logging.info("API: Received /api/start-hunt request.")
+    
+    if g_hunt_in_progress:
+        logging.warning("API: Hunt start rejected, one is already in progress.")
+        return jsonify({"message": "A hunt is already in progress."}), 409 # 409 Conflict
+
+    # Get params from UI, with fallbacks to settings.py
+    data = request.json or {}
+    num_generations = data.get('num_generations') or settings.NUM_GENERATIONS
+    population_size = data.get('population_size') or settings.POPULATION_SIZE
+    
+    # --- The non-blocking thread ---
+    # We launch the `run_hunt_in_background` function as a daemon thread.
+    # This means the API request returns *immediately* (in 1ms),
+    # while the hunt runs in the background for hours.
+    hunt_thread = threading.Thread(
+        target=run_hunt_in_background,
+        args=(num_generations, population_size),
+        daemon=True,
+        name="CoreEngineThread"
+    )
+    hunt_thread.start()
+    
+    return jsonify({"status": "Hunt Started"}), 202 # 202 Accepted
+
+@app.route('/api/get-status')
+def api_get_status():
+    """
+    API endpoint for the HTML dashboard to poll.
+    It just reads the JSON file updated by the Watcher.
+    """
+    if not os.path.exists(STATUS_FILE):
+        return jsonify({"hunt_status": "Idle", "found_files": [], "final_result": {}})
+    
+    try:
+        # This guarantees we send the most up-to-date info
+        with open(STATUS_FILE, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"hunt_status": f"Error reading status: {e}", "found_files": [], "final_result": {}}), 500
+
+# --- Main Application Runner ---
+if __name__ == "__main__":
+    # Create required directories on startup
+    os.makedirs(PROVENANCE_DIR, exist_ok=True)
+    os.makedirs(settings.CONFIG_DIR, exist_ok=True)
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
+    
+    # Start the Watcher service in its own thread
+    watcher_thread = threading.Thread(target=start_watcher_service, daemon=True, name="WatcherThread")
+    watcher_thread.start()
+    
+    # Start the Flask app
+    # We use host='0.0.0.0' to make it accessible in Colab/Cloud VMs
+    logging.info("Control Hub: Starting Flask server on http://0.0.0.0:8080")
+    app.run(host='0.0.0.0', port=8080)

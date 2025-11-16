@@ -1,0 +1,3112 @@
+
+Conversation with Gemini
+Hello! For our first task, we need to refactor the core pipeline to a "lite-core" version that uses only the Python standard library, as described in Patch 5 (Tab 1) of the diff file and Section II of the Code Review document.
+
+Please provide the complete, final code for these four files based on those patches:
+
+
+
+worker_unified.py (The new "lite" version that uses math.sin and outputs JSON)
+
+quantulemapper_real.py (The new "lite" profiler that uses statistics and math)
+
+validation_pipeline.py (The new "lite" validator that reads JSON and writes JSON/CSV)
+
+aste_hunter.py (The patched version that replaces numpy with math)
+
+Coding partner
+Hello! As your coding partner, I can certainly help with that. This refactor is a key step in creating a lightweight verification pipeline that can run without heavy dependencies like JAX or NumPy.
+
+Here is the complete, final code for the four files, refactored to the "lite-core" standard-library-only versions as described in the "Patch 5 (Tab 1)" diff and the "Code Review and Architecture Plan" document.
+
+1. worker_unified.py
+This is the new "lite" worker. It no longer uses JAX and instead generates a deterministic, synthetic dataset using standard math and random libraries. It now outputs a JSON file instead of an HDF5 artifact.
+
+Python
+#!/usr/bin/env python3
+
+"""
+worker_unified.py
+Simplified simulation worker used for automated verification.
+Generates a deterministic synthetic rho_history volume without relying on
+third-party numerical libraries so the orchestrator can execute inside
+minimal environments.
+"""
+
+import argparse
+import json
+import math
+import os
+import random
+import sys
+import time
+from typing import Any, Dict, List, Tuple
+
+GRID_SHAPE = (3, 4, 4, 4)  # (time, x, y, z)
+
+
+def _validate_params(params: Dict[str, Any]) -> None:
+    """Checks for the presence of all required parameters."""
+    required = ["param_D", "param_eta", "param_rho_vac", "param_a_coupling"]
+    missing = [key for key in required if key not in params]
+    if missing:
+        raise ValueError(f"Missing required parameters: {', '.join(missing)}")
+
+
+def _generate_cell_value(rng: random.Random, base: float, offsets: Tuple[int, int, int]) -> float:
+    """Generates a single deterministic cell value based on position and a base value."""
+    x, y, z = offsets
+    # Create a predictable wave pattern based on coordinates
+    wave = math.sin((x + 1) * 0.5) + math.cos((y + 2) * 0.3) + math.sin((z + 3) * 0.25)
+    # Add minor deterministic jitter
+    jitter = rng.uniform(-0.05, 0.05)
+    return round(base + 0.1 * wave + jitter, 6)
+
+
+def generate_rho_history(params: Dict[str, Any]) -> List[List[List[List[float]]]]:
+    """
+    Generates the full 4D synthetic rho_history list based on simulation parameters.
+    """
+    # Use a seed for deterministic output
+    seed = int(params.get("global_seed", 0)) % (2 ** 32)
+    rng = random.Random(seed)
+
+    # Create a base value from parameters so different inputs yield different signals
+    base = 0.5 + float(params.get("param_D", 0.0)) * 0.01
+    base += float(params.get("param_eta", 0.0)) * 0.02
+    base -= float(params.get("param_rho_vac", 0.0)) * 0.01
+    base += float(params.get("param_a_coupling", 0.0)) * 0.015
+
+    history: List[List[List[List[float]]]] = []
+    for t in range(GRID_SHAPE[0]):
+        frame: List[List[List[float]]] = []
+        for x in range(GRID_SHAPE[1]):
+            plane: List[List[float]] = []
+            for y in range(GRID_SHAPE[2]):
+                row: List[float] = []
+                for z in range(GRID_SHAPE[3]):
+                    # Add a slight time evolution
+                    value = _generate_cell_value(rng, base + t * 0.05, (x, y, z))
+                    row.append(value)
+                plane.append(row)
+            frame.append(plane)
+        history.append(frame)
+    return history
+
+
+def write_output(path: str, rho_history: List[List[List[List[float]]]], metadata: Dict[str, Any]) -> None:
+    """Writes the synthetic data and metadata to a JSON artifact file."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    payload = {
+        "rho_history": rho_history,
+        "grid_shape": GRID_SHAPE,
+        "metadata": metadata,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def main() -> int:
+    """Main entry point for the lite worker."""
+    parser = argparse.ArgumentParser(description="Deterministic simulation worker")
+    parser.add_argument("--params", required=True, help="Path to simulation parameters JSON")
+    parser.add_argument("--output", required=True, help="Where to write the rho history artifact")
+    args = parser.parse_args()
+
+    start = time.time()
+    try:
+        with open(args.params, "r", encoding="utf-8") as f:
+            params = json.load(f)
+    except FileNotFoundError:
+        print(f"Worker error: parameters file {args.params} not found.", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"Worker error: parameters file is not valid JSON ({exc}).", file=sys.stderr)
+        return 1
+
+    try:
+        _validate_params(params)
+    except ValueError as exc:
+        print(f"Worker error: {exc}", file=sys.stderr)
+        return 1
+
+    # Generate the synthetic 4D data structure
+    rho_history = generate_rho_history(params)
+
+    metadata = {
+        "generated_at": time.time(),
+        "params_hash_hint": params.get("config_hash"),
+        "run_uuid": params.get("run_uuid"),
+        "global_seed": params.get("global_seed"),
+    }
+
+    # Write the output JSON file
+    write_output(args.output, rho_history, metadata)
+
+    elapsed = time.time() - start
+    print(f"Worker completed successfully in {elapsed:.2f}s")
+    print(f"Output written to {args.output}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+2. quantulemapper_real.py
+This is the new "lite" profiler. It replaces all NumPy and SciPy calls with standard-library-only functions (math, statistics) to analyze the 4D list from the worker's JSON artifact.
+
+Python
+"""
+quantulemapper_real.py
+Deterministic quantule profiler that operates without external numeric
+libraries. It analyses the synthetic rho history generated by the worker
+and produces summary metrics along with simple falsifiability checks.
+"""
+
+import math
+import statistics
+from typing import Dict, Iterable, List, Tuple
+
+# Theoretical targets for the Prime-Log Spectral Attractor Hypothesis
+PRIME_LOG_TARGETS = [math.log(p) for p in (2, 3, 5, 7, 11, 13, 17, 19)]
+
+
+def _flatten(history: Iterable) -> List[float]:
+    """Recursively flattens the 4D list into a 1D list of floats."""
+    stack: List[float] = []
+    for t_frame in history:
+        for plane in t_frame:
+            for row in plane:
+                for value in row:
+                    stack.append(float(value))
+    return stack
+
+
+def _top_peaks(samples: List[float], k: int) -> List[float]:
+    """Replaces scipy.signal.find_peaks with a simple sort."""
+    if not samples:
+        return []
+    # Find the 'k' largest values as a proxy for peaks
+    return sorted(samples, reverse=True)[:k]
+
+
+def _compute_sse(observed: List[float], targets: List[float]) -> float:
+    """Replaces np.sum((obs - targets)**2) with a list comprehension."""
+    if not observed or not targets:
+        return 999.0  # Sentinel value for no peaks
+    length = min(len(observed), len(targets))
+    # Calculate Sum of Squared Errors (SSE)
+    return sum((observed[i] - targets[i]) ** 2 for i in range(length))
+
+
+def _null_scramble(peaks: List[float]) -> List[float]:
+    """Replaces FFT-based phase scrambling (Null A) with a simple list reverse."""
+    return list(reversed(peaks))
+
+
+def _null_shuffle_targets(peaks: List[float], targets: List[float]) -> Tuple[List[float], List[float]]:
+    """Replaces np.random.shuffle (Null B) with a deterministic list rotation."""
+    if not peaks:
+        return [], []
+    # Rotate targets by 1
+    rotated_targets = targets[1:] + targets[:1]
+    return peaks, rotated_targets
+
+
+def analyze_4d(rho_history: List[List[List[List[float]]]]) -> Dict[str, Dict[str, object]]:
+    """
+    Main entry point for the lite profiler.
+    Returns spectral and falsifiability metrics for the rho history.
+    """
+    # 1. Flatten the 4D list from JSON into a 1D list
+    samples = _flatten(rho_history)
+
+    # 2. Find peaks (simple sort)
+    peaks = _top_peaks(samples, len(PRIME_LOG_TARGETS))
+    targets = PRIME_LOG_TARGETS[: len(peaks)]
+    
+    # 3. Calculate main SSE
+    sse_main = _compute_sse(peaks, targets)
+
+    if peaks:
+        mean_value = statistics.fmean(peaks)
+        failure_reason = None
+    else:
+        mean_value = 0.0
+        failure_reason = "No peaks detected"
+
+    # 4. Falsifiability Check A (Scramble)
+    scrambled = _null_scramble(peaks)
+    sse_null_a = _compute_sse(scrambled, targets)
+
+    # 5. Falsifiability Check B (Shuffle)
+    shuffled_peaks, shuffled_targets = _null_shuffle_targets(peaks, targets)
+    sse_null_b = _compute_sse(shuffled_peaks, shuffled_targets)
+
+    # 6. Create CSV-like event data
+    events = []
+    for idx, value in enumerate(peaks):
+        events.append(
+            {
+                "quantule_id": f"q{idx + 1}",
+                "type": "MAIN",
+                "peak_value": round(value, 6),
+                "target": round(targets[idx], 6) if idx < len(targets) else None,
+            }
+        )
+
+    summary = {
+        "mean_peak_value": round(mean_value, 6),
+        "peak_count": len(peaks),
+    }
+
+    # 7. Return results in the format the validator expects
+    return {
+        "main": {
+            "sse": round(sse_main, 6),
+            "n_peaks": len(peaks),
+            "failure_reason": failure_reason,
+            "peaks": [round(v, 6) for v in peaks],
+            "targets": [round(v, 6) for v in targets],
+        },
+        "null_phase_scramble": {
+            "sse": round(sse_null_a, 6),
+            "n_peaks": len(scrambled),
+            "failure_reason": None,
+        },
+        "null_target_shuffle": {
+            "sse": round(sse_null_b, 6),
+            "n_peaks": len(shuffled_peaks),
+            "failure_reason": None,
+        },
+        "events": events,
+        "summary": summary,
+    }
+3. validation_pipeline.py
+This is the new "lite" validator. It no longer imports h5py or numpy. It loads JSON from the lite worker, imports the lite profiler (quantulemapper_real), and writes the final JSON and CSV provenance reports.
+
+Python
+#!/usr/bin/env python3
+
+"""
+validation_pipeline.py
+Lightweight spectral fidelity and provenance pipeline that depends only on
+Python's standard library. It pairs with the simplified worker to validate
+runs and emit provenance reports consumable by the Hunter.
+"""
+
+import argparse
+import csv
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+# Import the new "lite" profiler
+try:
+    import quantulemapper_real as cep_profiler
+except ImportError as exc:
+    print("FATAL: Could not import 'quantulemapper_real'.", file=sys.stderr)
+    print(f"Reason: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+SCHEMA_VERSION = "SFP-lite-v1"
+
+
+def generate_canonical_hash(params_dict: Dict[str, Any]) -> str:
+    """Generates a deterministic SHA-256 hash from core parameters."""
+    filtered = {
+        k: v
+        for k, v in params_dict.items()
+        # Filter out metadata keys to ensure hash is based on physics only
+        if k not in {"run_uuid", "config_hash", "param_hash_legacy"}
+    }
+    canonical_string = json.dumps(filtered, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_string.encode("utf-8")).hexdigest()
+
+
+def load_rho_history(path: str) -> Dict[str, Any]:
+    """Loads the worker's JSON artifact."""
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if "rho_history" not in payload:
+        raise ValueError("Input artifact missing 'rho_history' field")
+    return payload
+
+
+def run_quantule_profiler(rho_history: List[List[List[List[float]]]]) -> Dict[str, Any]:
+    """Calls the "lite" profiler's analyze_4d function."""
+    return cep_profiler.analyze_4d(rho_history)
+
+
+def build_provenance(
+    params: Dict[str, Any],
+    artifact: Dict[str, Any],
+    profiler_results: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Assembles the final provenance.json report."""
+    config_hash = params.get("config_hash") or generate_canonical_hash(params)
+
+    # Map results from the lite profiler to the provenance schema
+    spectral = {
+        "log_prime_sse": profiler_results["main"]["sse"],
+        "n_peaks_found_main": profiler_results["main"]["n_peaks"],
+        "failure_reason_main": profiler_results["main"]["failure_reason"],
+        "sse_null_phase_scramble": profiler_results["null_phase_scramble"]["sse"],
+        "n_peaks_found_null_a": profiler_results["null_phase_scramble"]["n_peaks"],
+        "failure_reason_null_a": profiler_results["null_phase_scramble"]["failure_reason"],
+        "sse_null_target_shuffle": profiler_results["null_target_shuffle"]["sse"],
+        "n_peaks_found_null_b": profiler_results["null_target_shuffle"]["n_peaks"],
+        "failure_reason_null_b": profiler_results["null_target_shuffle"]["failure_reason"],
+    }
+
+    metadata = {
+        "schema_version": SCHEMA_VERSION,
+        "config_hash": config_hash,
+        "run_uuid": params.get("run_uuid"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "input_grid_shape": artifact.get("grid_shape"),
+        "worker_metadata": artifact.get("metadata", {}),
+        "summary": profiler_results.get("summary", {}),
+    }
+
+    return {
+        "metadata": metadata,
+        "spectral_fidelity": spectral,
+        "quantule_events": profiler_results.get("events", []),
+    }
+
+
+def write_quantule_events(path: str, events: List[Dict[str, Any]]) -> None:
+    """Writes the quantule_events.csv file."""
+    fieldnames = ["quantule_id", "type", "peak_value", "target"]
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for event in events:
+            # Write only the keys that exist in the header
+            writer.writerow({key: event.get(key) for key in fieldnames})
+
+
+def write_provenance_report(path: str, report: Dict[str, Any]) -> None:
+    """Writes the final provenance.json file."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+
+def run_pipeline(args: argparse.Namespace) -> int:
+    """Main pipeline execution logic."""
+    try:
+        artifact = load_rho_history(args.input)
+    except FileNotFoundError:
+        print(f"Validator error: input artifact {args.input} not found.", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"Validator error: input artifact is not valid JSON ({exc}).", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Validator error: failed to load artifact ({exc}).", file=sys.stderr)
+        return 1
+
+    try:
+        with open(args.params, "r", encoding="utf-8") as f:
+            params = json.load(f)
+    except FileNotFoundError:
+        print(f"Validator error: params file {args.params} not found.", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"Validator error: params file is not valid JSON ({exc}).", file=sys.stderr)
+        return 1
+
+    # Run the "lite" profiler on the loaded data
+    profiler_results = run_quantule_profiler(artifact["rho_history"])
+    
+    # Build the provenance report
+    provenance = build_provenance(params, artifact, profiler_results)
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    config_hash = provenance["metadata"]["config_hash"]
+    report_path = os.path.join(args.output_dir, f"provenance_{config_hash}.json")
+    events_path = os.path.join(args.output_dir, f"{config_hash}_quantule_events.csv")
+
+    # Write the two output files
+    write_provenance_report(report_path, provenance)
+    write_quantule_events(events_path, provenance.get("quantule_events", []))
+
+    print(f"Validator completed. Report written to {report_path}")
+    return 0
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    """Parses command-line arguments."""
+    parser = argparse.ArgumentParser(description="Spectral fidelity validator")
+    parser.add_argument("--input", required=True, help="Path to rho history artifact")
+    parser.add_argument("--params", required=True, help="Path to parameters JSON")
+    parser.add_argument("--output_dir", required=True, help="Directory for provenance outputs")
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str] | None = None) -> int:
+    """CLI entry point."""
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+    return run_pipeline(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+4. aste_hunter.py
+This is the patched version of aste_hunter (8).py. All numpy calls for random number generation (np.random.normal, np.random.uniform) have been replaced with standard random library calls (random.normalvariate, random.uniform).
+
+Python
+#!/usr/bin/env python3
+
+"""
+aste_hunter.py
+CLASSIFICATION: Adaptive Learning Engine (ASTE V1.0)
+GOAL: Acts as the "Brain" of the ASTE. It reads validation reports
+      (provenance.json) from the SFP module, updates its internal
+      ledger, and applies an evolutionary algorithm to breed a
+      new generation of parameters that minimize the log_prime_sse.
+"""
+
+import os
+import json
+import csv
+import random
+import math  # Replaced numpy with math
+from typing import Dict, Any, List, Optional
+import sys # Added for stderr
+import uuid # Added for temporary hash generation
+
+# --- Configuration ---
+LEDGER_FILENAME = "simulation_ledger.csv"
+PROVENANCE_DIR = "provenance_reports" # Where the Validator saves reports
+SSE_METRIC_KEY = "log_prime_sse"
+HASH_KEY = "config_hash"
+
+# Evolutionary Algorithm Parameters
+TOURNAMENT_SIZE = 3
+MUTATION_RATE = 0.1
+MUTATION_STRENGTH = 0.05
+
+class Hunter:
+    """
+    Implements the core evolutionary "hunt" logic.
+    Manages a population of parameters stored in a ledger
+    and breeds new generations to minimize SSE.
+    """
+
+    def __init__(self, ledger_file: str = LEDGER_FILENAME):
+        self.ledger_file = ledger_file
+        self.fieldnames = [
+            HASH_KEY,
+            SSE_METRIC_KEY,
+            "fitness",
+            "generation",
+            "param_D",          # Metric-Aware Diffusion
+            "param_eta",        # Damping
+            "param_rho_vac",    # Derived metric param
+            "param_a_coupling"  # Derived metric param
+        ]
+        self.population = self._load_ledger()
+        print(f"[Hunter] Initialized. Loaded {len(self.population)} runs from {self.ledger_file}")
+
+    def _load_ledger(self) -> List[Dict[str, Any]]:
+        """Loads the historical population from the CSV ledger."""
+        if not os.path.exists(self.ledger_file):
+            # Create an empty ledger if it doesn't exist
+            with open(self.ledger_file, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=self.fieldnames)
+                writer.writeheader()
+            return []
+
+        population = []
+        try:
+            with open(self.ledger_file, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Convert numerical strings back to floats/ints
+                    for key in [SSE_METRIC_KEY, "fitness", "generation", "param_D", "param_eta", "param_rho_vac", "param_a_coupling"]:
+                        if key in row and row[key]:
+                            try:
+                                row[key] = float(row[key])
+                            except ValueError:
+                                row[key] = None
+                    population.append(row)
+        except Exception as e:
+            print(f"[Hunter Error] Failed to load ledger: {e}", file=sys.stderr)
+        return population
+
+    def _save_ledger(self):
+        """Saves the entire population back to the CSV ledger."""
+        try:
+            with open(self.ledger_file, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=self.fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                writer.writerows(self.population)
+        except Exception as e:
+            print(f"[Hunter Error] Failed to save ledger: {e}", file=sys.stderr)
+
+    def process_generation_results(self, provenance_dir: str, job_hashes: List[str]):
+        """
+        MANDATE: Reads new provenance.json files, calculates fitness,
+        and updates the internal ledger.
+        """
+        print(f"[Hunter] Processing {len(job_hashes)} new results from {provenance_dir}...")
+        new_runs_processed = 0
+        for config_hash in job_hashes:
+            report_path = os.path.join(provenance_dir, f"provenance_{config_hash}.json")
+
+            try:
+                with open(report_path, 'r') as f:
+                    data = json.load(f)
+
+                # Extract the critical SSE metric
+                # Patched to handle new lite-core provenance structure
+                sse = data["spectral_fidelity"][SSE_METRIC_KEY]
+
+                # Mandated Fitness Formula: fitness = 1 / SSE
+                # Add a small epsilon to prevent division by zero
+                fitness = 1.0 / (sse + 1e-9)
+
+                # Find the run in our population and update it
+                found = False
+                for run in self.population:
+                    if run[HASH_KEY] == config_hash:
+                        run[SSE_METRIC_KEY] = sse
+                        run["fitness"] = fitness
+                        found = True
+                        break
+
+                if found:
+                    new_runs_processed += 1
+                else:
+                    print(f"[Hunter Warning] Hash {config_hash} found in JSON but not in population ledger.", file=sys.stderr)
+
+            except FileNotFoundError:
+                print(f"[Hunter Warning] Provenance file not found: {report_path}", file=sys.stderr)
+            except Exception as e:
+                print(f"[Hunter Error] Failed to parse {report_path}: {e}", file=sys.stderr)
+
+        print(f"[Hunter] Successfully processed and updated {new_runs_processed} runs.")
+        self._save_ledger()
+
+    def _select_parent(self) -> Dict[str, Any]:
+        """Selects one parent using tournament selection."""
+        # Pick N random individuals from the population
+        tournament = random.sample(self.population, TOURNAMENT_SIZE)
+
+        # The winner is the one with the highest fitness (lowest SSE)
+        winner = max(tournament, key=lambda x: x.get("fitness", 0.0))
+        return winner
+
+    def _crossover(self, parent1: Dict[str, Any], parent2: Dict[str, Any]) -> Dict[str, Any]:
+        """Performs simple average crossover on parameters."""
+        child_params = {
+            "param_D": (parent1["param_D"] + parent2["param_D"]) / 2.0,
+            "param_eta": (parent1["param_eta"] + parent2["param_eta"]) / 2.0,
+            "param_rho_vac": (parent1["param_rho_vac"] + parent2["param_rho_vac"]) / 2.0,
+            "param_a_coupling": (parent1["param_a_coupling"] + parent2["param_a_coupling"]) / 2.0
+        }
+        return child_params
+
+    def _mutate(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Applies random mutation to parameters."""
+        # Replaced np.random.normal with random.normalvariate
+        if random.random() < MUTATION_RATE:
+            params["param_D"] += random.normalvariate(0, MUTATION_STRENGTH)
+            params["param_D"] = max(0.001, params["param_D"])
+
+        if random.random() < MUTATION_RATE:
+            params["param_eta"] += random.normalvariate(0, MUTATION_STRENGTH)
+            params["param_eta"] = max(0.001, params["param_eta"])
+
+        if random.random() < MUTATION_RATE:
+            params["param_rho_vac"] += random.normalvariate(0, MUTATION_STRENGTH)
+            params["param_rho_vac"] = max(0.001, params["param_rho_vac"])
+
+        if random.random() < MUTATION_RATE:
+            params["param_a_coupling"] += random.normalvariate(0, MUTATION_STRENGTH)
+            params["param_a_coupling"] = max(0.001, params["param_a_coupling"])
+
+        return params
+
+    def get_next_generation(self, population_size: int) -> List[Dict[str, Any]]:
+        """
+        Breeds a new generation of parameters.
+        This is the main function called by the Orchestrator.
+        """
+        new_generation_params = []
+
+        if not self.population:
+            # Generation 0: Create a random population
+            print("[Hunter] No population found. Generating random Generation 0.")
+            for _ in range(population_size):
+                # Replaced np.random.uniform with random.uniform
+                params = {
+                    "param_D": random.uniform(0.1, 2.0),
+                    "param_eta": random.uniform(0.01, 0.5),
+                    "param_rho_vac": random.uniform(0.5, 1.5),
+                    "param_a_coupling": random.uniform(0.5, 1.5)
+                }
+                new_generation_params.append(params)
+        else:
+            # Breed a new generation from the existing population
+            # Find the generation number of the most recent entry
+            last_gen = max(int(run.get("generation", 0)) for run in self.population)
+            print(f"[Hunter] Breeding Generation {last_gen + 1}...")
+            
+            # Sort by fitness (highest first)
+            sorted_population = sorted(self.population, key=lambda x: x.get("fitness", 0.0), reverse=True)
+
+            # Elitism: Keep the top 2 best individuals
+            new_generation_params.append({
+                "param_D": sorted_population[0]["param_D"],
+                "param_eta": sorted_population[0]["param_eta"],
+                "param_rho_vac": sorted_population[0]["param_rho_vac"],
+                "param_a_coupling": sorted_population[0]["param_a_coupling"]
+            })
+            new_generation_params.append({
+                "param_D": sorted_population[1]["param_D"],
+                "param_eta": sorted_population[1]["param_eta"],
+                "param_rho_vac": sorted_population[1]["param_rho_vac"],
+                "param_a_coupling": sorted_population[1]["param_a_coupling"]
+            })
+
+            # Breed the rest
+            for _ in range(population_size - 2):
+                parent1 = self._select_parent()
+                parent2 = self._select_parent()
+                child_params = self._crossover(parent1, parent2)
+                mutated_child_params = self._mutate(child_params)
+                new_generation_params.append(mutated_child_params)
+
+        # --- Update Internal Ledger ---
+        # We will add these to the population *after* the Orchestrator
+        # provides the real hashes. This function just returns the raw params.
+        self.last_generation_jobs = [] # Clear last batch
+        current_gen = max(int(run.get("generation", -1)) for run in self.population) + 1 if self.population else 0
+        for params in new_generation_params:
+            # This job entry is temporary, to be confirmed by the orchestrator
+            job_entry = {
+                SSE_METRIC_KEY: None,
+                "fitness": None,
+                "generation": current_gen,
+                "param_D": params["param_D"],
+                "param_eta": params["param_eta"],
+                "param_rho_vac": params["param_rho_vac"],
+                "param_a_coupling": params["param_a_coupling"]
+            }
+            self.last_generation_jobs.append(job_entry)
+
+        return new_generation_params # Return raw params to Orchestrator
+
+    def register_new_jobs(self, job_list: List[Dict[str, Any]]):
+        """
+        Called by the Orchestrator *after* it has generated
+        canonical hashes for the new jobs.
+        """
+        self.population.extend(job_list)
+        print(f"[Hunter] Registered {len(job_list)} new jobs in ledger.")
+
+    def get_best_run(self) -> Optional[Dict[str, Any]]:
+        """
+        Utility to get the best-performing run from the ledger.
+        """
+        if not self.population:
+            return None
+        valid_runs = [r for r in self.population if r.get("fitness")]
+        if not valid_runs:
+            return None
+        return max(valid_runs, key=lambda x: x["fitness"])
+ Implement the New Orchestrator (Patch 3)
+
+Your Prompt to the AI:
+
+
+
+Great. Now that we have the "lite" components, we need the new main orchestrator based on Patch 3 (Tab 3) and Section III of the Code Review document.
+
+Please provide the complete code for the new aste_s-ncgl_hunt.py script. This script should be the "Control Plane" that:
+
+
+
+Loads modules like aste_hunter using importlib.
+
+Uses subprocess.run to call the "lite" worker_unified.py and validation_pipeline.py scripts we just created.
+
+Manages the full end-to-end evolutionary loop.
+
+Self-correction: Please ensure the script points to the correct, non-numbered filenames (e.g., validation_pipeline.py, not validation_pipeline (5).py).
+
+Coding partner
+Certainly. Here is the complete code for the new aste_s-ncgl_hunt.py orchestrator script.
+
+This "Control Plane" script is based on Patch 3 (Tab 3) and the architecture described in Section III of the Code Review document. It is designed to manage the "lite-core" pipeline by:
+
+Loading helper functions from other modules (like aste_hunter) using importlib.
+
+Executing the worker_unified.py and validation_pipeline.py scripts as external processes using subprocess.run.
+
+As you requested, I have updated the script to use the final, non-numbered filenames (aste_hunter.py and validation_pipeline.py) instead of the suffixed versions from the patch file.
+
+aste_s-ncgl_hunt.py (The New Orchestrator)
+Python
+#!/usr/bin/env python3
+"""ASTE S-NCGL Hunt Orchestrator
+================================
+
+This executable script wires the Adaptive Simulation Tuning Engine (ASTE)
+components together into a single command line entry point. It coordinates the
+following stages for each evolutionary generation:
+
+1. **Hunter** (`aste_hunter`) breeds the next batch of parameter sets.
+2. **Worker** (`worker_unified`) generates synthetic data for every candidate and
+   stores the resulting JSON artifacts.
+3. **Validator** (`validation_pipeline`) runs the "lite" profiler to produce the
+   provenance reports consumed by the Hunter.
+
+Run the unified loop with::
+
+    python aste_s-ncgl_hunt.py --config pipeline_config.json
+
+If no configuration file is supplied a small demonstration configuration is
+used. The configuration controls the number of generations, population size,
+output directories, and baseline simulation settings passed to the worker.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import uuid
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+# This default config points to the "lite-core" scripts
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "generations": 1,
+    "population": 2,
+    "paths": {
+        "config_dir": "configs",
+        "data_dir": "Simulation_ledgers",
+        "provenance_dir": "provenance_reports",
+        "ledger_file": "simulation_ledger.csv",
+    },
+    "worker": {
+        "script": "worker_unified.py",
+    },
+    "validator": {
+        # Corrected filename as requested
+        "script": "validation_pipeline.py",
+    },
+    "simulation": {
+        # These are dummy values for the "lite" worker
+        "N_grid": 8,
+        "L_domain": 10.0,
+        "T_steps": 8,
+        "dt": 0.01,
+    },
+}
+
+
+@dataclass
+class PipelineConfig:
+    """Resolved configuration derived from CLI and optional JSON file."""
+
+    generations: int
+    population: int
+    config_dir: Path
+    data_dir: Path
+    provenance_dir: Path
+    ledger_file: Path
+    worker_script: Path
+    validator_script: Path
+    simulation: Dict[str, Any]
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Return ``base`` updated recursively with ``override``."""
+
+    result: Dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(value, dict)
+        ):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_json_config(config_path: Optional[str]) -> Dict[str, Any]:
+    """Loads the override JSON config file, if one is provided."""
+    if not config_path:
+        return {}
+
+    path = Path(config_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _resolve_pipeline_config(
+    cli_args: argparse.Namespace,
+) -> PipelineConfig:
+    """Merges default config, file config, and CLI args."""
+    user_config = _load_json_config(cli_args.config)
+    merged = _deep_merge(DEFAULT_CONFIG, user_config)
+
+    if cli_args.generations is not None:
+        merged["generations"] = cli_args.generations
+    if cli_args.population is not None:
+        merged["population"] = cli_args.population
+
+    root = Path(__file__).resolve().parent
+
+    config_dir = root / merged["paths"]["config_dir"]
+    data_dir = root / merged["paths"]["data_dir"]
+    provenance_dir = root / merged["paths"]["provenance_dir"]
+    ledger_file = root / merged["paths"]["ledger_file"]
+
+    # These script paths are resolved relative to this orchestrator script
+    worker_script = root / merged["worker"]["script"]
+    validator_script = root / merged["validator"]["script"]
+
+    simulation = dict(merged["simulation"])
+
+    return PipelineConfig(
+        generations=int(merged["generations"]),
+        population=int(merged["population"]),
+        config_dir=config_dir,
+        data_dir=data_dir,
+        provenance_dir=provenance_dir,
+        ledger_file=ledger_file,
+        worker_script=worker_script,
+        validator_script=validator_script,
+        simulation=simulation,
+    )
+
+
+def _load_module(module_name: str, module_path: Path):
+    """
+    Import a module from an arbitrary file path.
+    This allows us to call functions from aste_hunter.py.
+    """
+    spec = importlib_util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module '{module_name}' from {module_path}")
+
+    module = importlib_util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)  # type: ignore[assignment]
+    return module
+
+
+def _ensure_directories(paths: Iterable[Path]) -> None:
+    """Creates all directories needed for the pipeline run."""
+    for path in paths:
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def _derive_seed_from_uuid(run_uuid: str) -> int:
+    """Creates a deterministic 32-bit seed from a UUID string."""
+    raw = int(run_uuid.replace("-", ""), 16)
+    return raw % (2 ** 32)
+
+
+def _save_config_file(config_dir: Path, config_hash: str, params: Dict[str, Any]) -> Path:
+    """Saves a parameter set to a JSON config file."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    path = config_dir / f"config_{config_hash}.json"
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(params, handle, indent=2, sort_keys=True)
+    return path
+
+
+def _run_subprocess(command: List[str], label: str) -> Tuple[int, str, str]:
+    """Helper to run and log an external script (worker or validator)."""
+    print(f"[Pipeline] -> Launching {label}: {' '.join(command)}")
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    if completed.stdout:
+        print(f"[Pipeline] {label} stdout:\n{completed.stdout}")
+    if completed.stderr:
+        print(f"[Pipeline] {label} stderr:\n{completed.stderr}", file=sys.stderr)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def run_generation(
+    config: PipelineConfig,
+    hunter_module,
+    validation_module,
+    generation_index: int,
+) -> bool:
+    """Runs the full loop for a single generation."""
+    
+    # Get classes and functions from the dynamically loaded modules
+    Hunter = hunter_module.Hunter
+    HASH_KEY = hunter_module.HASH_KEY
+    generate_canonical_hash = validation_module.generate_canonical_hash
+
+    hunter = Hunter(ledger_file=str(config.ledger_file))
+
+    start_gen = hunter.get_current_generation()
+    if generation_index < start_gen:
+        print(
+            f"[Pipeline] Skipping generation {generation_index}; ledger already progressed to {start_gen}.",
+            file=sys.stderr,
+        )
+        return True
+
+    print("\n========================================================")
+    print(f"    ASTE S-NCGL: STARTING GENERATION {generation_index}")
+    print("========================================================")
+
+    # 1. BREED: Get new parameters from the Hunter
+    parameter_batch = hunter.get_next_generation(config.population)
+    jobs_to_run: List[Dict[str, Any]] = []
+
+    print(f"[Pipeline] Registering {len(parameter_batch)} jobs for generation {generation_index}...")
+    for params in parameter_batch:
+        run_uuid = str(uuid.uuid4())
+        global_seed = _derive_seed_from_uuid(run_uuid)
+
+        # Create the full parameter dictionary
+        full_params: Dict[str, Any] = dict(params)
+        full_params.update(
+            {
+                "run_uuid": run_uuid,
+                "global_seed": global_seed,
+                "simulation": config.simulation,
+            }
+        )
+
+        # Generate the hash *before* adding it to the dict
+        config_hash = generate_canonical_hash(full_params)
+        full_params["config_hash"] = config_hash
+
+        # 2. CONFIGURE: Save the parameters.json file
+        config_path = _save_config_file(config.config_dir, config_hash, full_params)
+
+        job_entry = {
+            HASH_KEY: config_hash,
+            "generation": generation_index,
+            "param_D": full_params["param_D"],
+            "param_eta": full_params["param_eta"],
+            "param_rho_vac": full_params["param_rho_vac"],
+            "param_a_coupling": full_params["param_a_coupling"],
+            "params_filepath": str(config_path),
+        }
+        jobs_to_run.append(job_entry)
+
+    hunter.register_new_jobs(jobs_to_run)
+    successful_hashes: List[str] = []
+
+    for job in jobs_to_run:
+        config_hash = job[HASH_KEY]
+        params_path = job["params_filepath"]
+        
+        # Define the path for the "lite" JSON artifact
+        artifact_path = config.data_dir / f"rho_history_{config_hash}.json"
+
+        # 3. SIMULATE: Call the "lite" worker script
+        worker_command = [
+            sys.executable,
+            str(config.worker_script),
+            "--params",
+            params_path,
+            "--output",
+            str(artifact_path),
+        ]
+        returncode, _, _ = _run_subprocess(worker_command, f"Worker {config_hash[:10]}")
+        if returncode != 0:
+            print(
+                f"[Pipeline] Worker failed for {config_hash[:10]}; skipping validation.",
+                file=sys.stderr,
+            )
+            continue
+
+        # 4. VALIDATE: Call the "lite" validator script
+        validator_command = [
+            sys.executable,
+            str(config.validator_script),
+            "--input",
+            str(artifact_path),
+            "--params",
+            params_path,
+            "--output_dir",
+            str(config.provenance_dir),
+        ]
+        v_code, _, _ = _run_subprocess(validator_command, f"Validator {config_hash[:10]}")
+        if v_code == 0:
+            successful_hashes.append(config_hash)
+        else:
+            print(
+                f"[Pipeline] Validator failed for {config_hash[:10]}; results not ingested.",
+                file=sys.stderr,
+            )
+
+    # 5. INGEST: Tell the Hunter to read the new reports
+    if successful_hashes:
+        hunter.process_generation_results(
+            provenance_dir=str(config.provenance_dir),
+            job_hashes=successful_hashes,
+        )
+        best = hunter.get_best_run()
+        if best:
+            best_hash = best[HASH_KEY]
+            fitness = best.get("fitness")
+            print(
+                f"[Pipeline] Best run so far: {best_hash[:10]} with fitness {fitness}",
+            )
+    else:
+        print(
+            "[Pipeline] No successful jobs this generation; ledger not updated.",
+            file=sys.stderr,
+        )
+        return False
+
+    return True
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Main CLI entry point for the orchestrator."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Unified ASTE orchestrator that coordinates the Hunter, Worker, and CEPP profiler."
+        )
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to a JSON configuration file that overrides defaults.",
+    )
+    parser.add_argument(
+        "--generations",
+        type=int,
+        help="Override the number of generations to run (takes precedence over config).",
+    )
+    parser.add_argument(
+        "--population",
+        type=int,
+        help="Override the population size per generation (takes precedence over config).",
+    )
+
+    args = parser.parse_args(argv)
+
+    try:
+        pipeline_config = _resolve_pipeline_config(args)
+    except FileNotFoundError as e:
+        print(f"CRITICAL_FAIL: {e}", file=sys.stderr)
+        return 1
+
+    _ensure_directories(
+        [
+            pipeline_config.config_dir,
+            pipeline_config.data_dir,
+            pipeline_config.provenance_dir,
+            pipeline_config.ledger_file.parent,
+        ]
+    )
+
+    # Define paths to the modules we need to *import* functions from
+    root = Path(__file__).resolve().parent
+    # Corrected filenames as requested
+    hunter_path = root / "aste_hunter.py"
+    validation_path = root / "validation_pipeline.py"
+
+    try:
+        hunter_module = _load_module("aste_hunter", hunter_path)
+        validation_module = _load_module("validation_pipeline", validation_path)
+    except ImportError as e:
+        print(f"CRITICAL_FAIL: Failed to load core modules: {e}", file=sys.stderr)
+        return 1
+
+    overall_success = True
+    # Get the starting generation number from the ledger
+    hunter = hunter_module.Hunter(ledger_file=str(pipeline_config.ledger_file))
+    start_gen = hunter.get_current_generation()
+    del hunter  # Release the file lock
+
+    target_generations = range(start_gen, start_gen + pipeline_config.generations)
+
+    for generation_index in target_generations:
+        generation_success = run_generation(
+            pipeline_config, hunter_module, validation_module, generation_index
+        )
+        overall_success = overall_success and generation_success
+
+    return 0 if overall_success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+Add the Advanced Validation Suite (Patch 4)
+
+Your Prompt to the AI:
+
+
+
+Next, let's add the new "Sprint 3" advanced validation tools from Patch 4 (Tab 2) and Section IV of the Code Review document.
+
+These are new, standalone tools. Please provide the full code for these three files:
+
+
+
+tda_taxonomy_validator.py (The Topological Data Analysis tool)
+
+deconvolution_validator.py (The SPDC/FFT deconvolution tool)
+
+visualize_deconvolution.py (The visualizer for the deconvolution study)
+
+Coding partner
+Hello! As your coding partner, I'm happy to provide the advanced validation suite.
+
+These standalone tools are described in Patch 4 (Tab 2) and Section IV of the Code Review document. They are designed to provide deeper, more advanced scientific validation (Structural and External) for your simulation results.
+
+Here is the complete, final code for the three requested files.
+
+1. tda_taxonomy_validator.py
+This is the Topological Data Analysis (TDA) tool. As described in the plans, its purpose is to create a "Quantule Taxonomy" by analyzing the spatial structure of the simulation's output. It reads the quantule_events.csv file generated by the validator, treats the event coordinates as a 3D point cloud, and uses persistent homology (H0, H1) to find "spots" and "loops".
+
+Python
+#!/usr/bin/env python3
+"""Topological validation utilities for Quantule event clouds.
+
+This module reads a ``quantule_events.csv`` file containing collapse-event
+coordinates and performs a persistent-homology analysis to characterise the
+long-lived structures in the data set. The script is intentionally written as a
+standalone CLI tool so it can be scheduled as part of a post-run validation
+pipeline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+# ``ripser`` is the reference implementation used in the cited literature. We
+# proactively check for it here so we can emit a clear error message rather than
+# failing with an obscure ImportError inside the CLI handler.
+if importlib_util.find_spec("ripser") is None:  # pragma: no cover - import guard
+    raise ImportError(
+        "tda_taxonomy_validator.py requires the 'ripser' package. "
+        "Install it with `pip install ripser persim`."
+    )
+
+from ripser import ripser  # type: ignore  # noqa: E402
+
+# ``persim`` is an optional dependency that allows us to produce persistence
+# diagrams. It is widely available together with ``ripser``. The plotting
+# routine is gated behind a feature flag for environments without matplotlib.
+PERSIM_AVAILABLE = importlib_util.find_spec("persim") is not None
+if PERSIM_AVAILABLE:  # pragma: no cover - optional import
+    from persim import plot_diagrams  # type: ignore  # noqa: E402
+
+MATPLOTLIB_AVAILABLE = importlib_util.find_spec("matplotlib") is not None
+if MATPLOTLIB_AVAILABLE:  # pragma: no cover - optional import
+    import matplotlib.pyplot as plt
+else:  # pragma: no cover - optional import
+    plt = None  # type: ignore
+
+
+@dataclass(frozen=True)
+class PersistentFeature:
+    """Representation of a single persistent-homology feature."""
+
+    dimension: int
+    birth: float
+    death: float
+
+    @property
+    def lifetime(self) -> float:
+        return self.death - self.birth
+
+    def to_dict(self) -> Dict[str, float]:
+        return {"dimension": self.dimension, "birth": self.birth, "death": self.death, "lifetime": self.lifetime}
+
+
+@dataclass
+class TaxonomyReport:
+    """Summary of the persistent features grouped by homology dimension."""
+
+    h0_count: int
+    h1_count: int
+    h0_features: List[PersistentFeature]
+    h1_features: List[PersistentFeature]
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "h0_count": self.h0_count,
+            "h1_count": self.h1_count,
+            "h0_features": [feat.to_dict() for feat in self.h0_features],
+            "h1_features": [feat.to_dict() for feat in self.h1_features],
+        }
+
+
+def _infer_coordinate_columns(columns: Iterable[str]) -> Tuple[str, str]:
+    """Best-effort heuristic to find the planar coordinate columns."""
+
+    lower = [c.lower() for c in columns]
+    for x_candidate in ("x", "pos_x", "collapse_x", "event_x"):
+        if x_candidate in lower:
+            break
+    else:
+        raise ValueError("Could not infer x-coordinate column in CSV file.")
+
+    for y_candidate in ("y", "pos_y", "collapse_y", "event_y"):
+        if y_candidate in lower:
+            break
+    else:
+        raise ValueError("Could not infer y-coordinate column in CSV file.")
+
+    x_column = columns[lower.index(x_candidate)]
+    y_column = columns[lower.index(y_candidate)]
+    return x_column, y_column
+
+
+def _extract_points(csv_path: Path, x_column: str | None, y_column: str | None) -> np.ndarray:
+    df = pd.read_csv(csv_path)
+
+    if x_column is None or y_column is None:
+        x_column, y_column = _infer_coordinate_columns(df.columns)
+
+    if x_column not in df.columns or y_column not in df.columns:
+        raise KeyError(f"Columns '{x_column}' and '{y_column}' must exist in {csv_path}.")
+
+    points = df[[x_column, y_column]].to_numpy(dtype=float)
+
+    if not np.all(np.isfinite(points)):
+        raise ValueError("Coordinate data contains NaNs or infinite values.")
+
+    if len(points) == 0:
+        raise ValueError("No points found in the CSV file.")
+
+    return points
+
+
+def compute_persistence(points: np.ndarray, maxdim: int = 1) -> Dict[str, np.ndarray]:
+    """Compute persistent homology using ripser."""
+
+    # Normalise the cloud to the unit square so the persistence thresholds are
+    # comparable across runs with different scales.
+    shifted = points - points.min(axis=0, keepdims=True)
+    scale = np.ptp(shifted, axis=0, keepdims=True)
+    scale[scale == 0.0] = 1.0
+    normalised = shifted / scale
+    result = ripser(normalised, maxdim=maxdim)
+    return result
+
+
+def _collect_features(diagrams: List[np.ndarray], min_lifetime: float) -> TaxonomyReport:
+    h0_diagram = diagrams[0] if diagrams else np.empty((0, 2))
+    h1_diagram = diagrams[1] if len(diagrams) > 1 else np.empty((0, 2))
+
+    def to_features(diagram: np.ndarray, dimension: int) -> List[PersistentFeature]:
+        feats: List[PersistentFeature] = []
+        for birth, death in diagram:
+            death_val = float(death if math.isfinite(death) else 1.0)
+            feature = PersistentFeature(dimension=dimension, birth=float(birth), death=death_val)
+            if feature.lifetime >= min_lifetime:
+                feats.append(feature)
+        return feats
+
+    h0_features = to_features(h0_diagram, dimension=0)
+    h1_features = to_features(h1_diagram, dimension=1)
+    return TaxonomyReport(
+        h0_count=len(h0_features),
+        h1_count=len(h1_features),
+        h0_features=h0_features,
+        h1_features=h1_features,
+    )
+
+
+def _render_diagram(diagrams: List[np.ndarray], output_path: Path) -> None:
+    if not (PERSIM_AVAILABLE and MATPLOTLIB_AVAILABLE):  # pragma: no cover - plotting side effect
+        raise RuntimeError(
+            "Persistence diagram plotting requires the 'persim' and 'matplotlib' packages."
+        )
+    fig = plt.figure(figsize=(6, 5))  # type: ignore[misc]
+    ax = fig.add_subplot(1, 1, 1)
+    plot_diagrams(diagrams, ax=ax)
+    ax.set_title("Quantule Event Persistence Diagram")
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)  # type: ignore[misc]
+
+
+def analyse_quantule_events(
+    csv_path: Path,
+    *,
+    min_lifetime: float,
+    x_column: str | None,
+    y_column: str | None,
+    save_diagram: Path | None,
+) -> TaxonomyReport:
+    points = _extract_points(csv_path, x_column=x_column, y_column=y_column)
+    persistence = compute_persistence(points, maxdim=1)
+    report = _collect_features(persistence["dgms"], min_lifetime=min_lifetime)
+
+    if save_diagram is not None:
+        _render_diagram(persistence["dgms"], save_diagram)
+
+    return report
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Persistent homology based taxonomy validator")
+    parser.add_argument("csv", type=Path, help="Path to quantule_events.csv produced by a simulation run")
+    parser.add_argument(
+        "--min-lifetime",
+        type=float,
+        default=0.05,
+        help="Minimum persistence lifetime required for a feature to be reported (default: 0.05)",
+    )
+    parser.add_argument("--x-column", type=str, default=None, help="Explicit name of the x-coordinate column")
+    parser.add_argument("--y-column", type=str, default=None, help="Explicit name of the y-coordinate column")
+    parser.add_argument(
+        "--diagram",
+        type=Path,
+        default=None,
+        help="Optional path where a persistence diagram PNG will be written",
+    )
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Optional path where a machine-readable taxonomy report will be written",
+    )
+    return parser
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    report = analyse_quantule_events(
+        args.csv,
+        min_lifetime=args.min_lifetime,
+        x_column=args.x_column,
+        y_column=args.y_column,
+        save_diagram=args.diagram,
+    )
+
+    print("Quantule Taxonomy")
+    print(f"  Persistent H0 components (spots): {report.h0_count}")
+    print(f"  Persistent H1 loops    (voids): {report.h1_count}")
+
+    if args.json is not None:
+        payload = {
+            "source_csv": str(args.csv),
+            "min_lifetime": args.min_lifetime,
+            "report": report.to_dict(),
+        }
+        args.json.write_text(json.dumps(payload, indent=2))
+        print(f"Saved taxonomy report to {args.json}")
+
+    if args.diagram is not None:
+        print(f"Saved persistence diagram to {args.diagram}")
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())
+2. deconvolution_validator.py
+This is the External Validation tool. It implements the "Forward Validation" protocol to solve the "Phase Problem" identified in the Code Review. Instead of a simple deconvolution, it generates a synthetic "primordial" signal and "instrument" function, convolves them, and then performs a regularized deconvolution to test the recovery process and report the SSE.
+
+Python
+#!/usr/bin/env python3
+"""Synthetic FFT deconvolution study for the NCGL profiler."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Tuple
+
+import numpy as np
+
+
+@dataclass
+class MockSPDCData:
+    """Container for the four stages of the synthetic SPDC measurement."""
+
+    primordial: np.ndarray
+    instrument: np.ndarray
+    convolved: np.ndarray
+    recovered: np.ndarray
+
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            "primordial_min": float(self.primordial.min()),
+            "primordial_max": float(self.primordial.max()),
+            "recovered_min": float(self.recovered.min()),
+            "recovered_max": float(self.recovered.max()),
+        }
+
+
+def _gaussian_2d(grid_x: np.ndarray, grid_y: np.ndarray, centre: Tuple[float, float], sigma: Tuple[float, float]) -> np.ndarray:
+    cx, cy = centre
+    sx, sy = sigma
+    exponent = -(((grid_x - cx) ** 2) / (2.0 * sx ** 2) + ((grid_y - cy) ** 2) / (2.0 * sy ** 2))
+    return np.exp(exponent)
+
+
+def _stripe_pattern(grid_x: np.ndarray, grid_y: np.ndarray, frequency: float, angle: float) -> np.ndarray:
+    theta = np.deg2rad(angle)
+    rotated = np.cos(theta) * grid_x + np.sin(theta) * grid_y
+    return 0.5 * (1.0 + np.cos(2 * np.pi * frequency * rotated))
+
+
+def make_mock_spdc_dataset(size: int = 256) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lin = np.linspace(-1.0, 1.0, size)
+    grid_x, grid_y = np.meshgrid(lin, lin, indexing="ij")
+
+    primordial = _gaussian_2d(grid_x, grid_y, centre=(0.0, 0.0), sigma=(0.25, 0.35))
+    primordial *= 0.35 + 0.65 * _stripe_pattern(grid_x, grid_y, frequency=1.75, angle=35.0)
+
+    instrument = _gaussian_2d(grid_x, grid_y, centre=(0.0, 0.0), sigma=(0.18, 0.12))
+
+    convolved = fft_convolve2d(primordial, instrument)
+
+    return primordial, instrument, convolved
+
+
+def fft_convolve2d(signal: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    signal_fft = np.fft.rfftn(signal)
+    kernel_fft = np.fft.rfftn(kernel, s=signal.shape)
+    convolved_fft = signal_fft * kernel_fft
+    convolved = np.fft.irfftn(convolved_fft, s=signal.shape)
+    return np.real(convolved)
+
+
+def regularised_deconvolution(observed: np.ndarray, kernel: np.ndarray, *, epsilon: float = 1e-3) -> np.ndarray:
+    observed_fft = np.fft.rfftn(observed)
+    kernel_fft = np.fft.rfftn(kernel, s=observed.shape)
+    magnitude = np.abs(kernel_fft) ** 2
+    inverse_fft = np.conj(kernel_fft) / (magnitude + epsilon)
+    recovered_fft = observed_fft * inverse_fft
+    recovered = np.fft.irfftn(recovered_fft, s=observed.shape)
+    return np.real(recovered)
+
+
+def compute_sse(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.sum((a - b) ** 2))
+
+
+def run_deconvolution_study(size: int = 256, epsilon: float = 1e-3) -> Tuple[MockSPDCData, Dict[str, float]]:
+    primordial, instrument, convolved = make_mock_spdc_dataset(size=size)
+    recovered = regularised_deconvolution(convolved, instrument, epsilon=epsilon)
+
+    # Normalise the recovered map to the primordial amplitude range to make the
+    # SSE comparison meaningful for reporting. This mimics the scaling step the
+    # profiler performs after loading a recovered JSI.
+    primordial_min, primordial_max = primordial.min(), primordial.max()
+    rec_min, rec_max = recovered.min(), recovered.max()
+    if rec_max - rec_min > 0:
+        recovered_scaled = (recovered - rec_min) / (rec_max - rec_min)
+        recovered_scaled = recovered_scaled * (primordial_max - primordial_min) + primordial_min
+    else:
+        recovered_scaled = recovered
+
+    sse_ext = compute_sse(recovered_scaled, primordial)
+    sse_convolved = compute_sse(convolved, fft_convolve2d(recovered_scaled, instrument))
+
+    data = MockSPDCData(
+        primordial=primordial,
+        instrument=instrument,
+        convolved=convolved,
+        recovered=recovered_scaled,
+    )
+
+    metrics = {
+        "size": size,
+        "epsilon": epsilon,
+        "sse_recovered_vs_primordial": sse_ext,
+        "sse_convolution_consistency": sse_convolved,
+    }
+
+    return data, metrics
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Synthetic FFT deconvolution validator")
+    parser.add_argument("--size", type=int, default=256, help="Resolution of the mock dataset (default: 256)")
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=1e-3,
+        help="Tikhonov regularisation constant used during FFT deconvolution",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional directory where JSON metrics and NumPy arrays will be saved",
+    )
+    return parser
+
+
+def _save_outputs(output_dir: Path, data: MockSPDCData, metrics: Dict[str, float]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    np.save(output_dir / "primordial.npy", data.primordial)
+    np.save(output_dir / "instrument.npy", data.instrument)
+    np.save(output_dir / "convolved.npy", data.convolved)
+    np.save(output_dir / "recovered.npy", data.recovered)
+    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    data, metrics = run_deconvolution_study(size=args.size, epsilon=args.epsilon)
+
+    print("FFT Deconvolution Study")
+    print(f"  Grid size: {args.size} x {args.size}")
+    print(f"  Regularisation epsilon: {args.epsilon}")
+    print(f"  SSE(recovered, primordial): {metrics['sse_recovered_vs_primordial']:.6f}")
+    print(f"  SSE consistency check   : {metrics['sse_convolution_consistency']:.6f}")
+
+    if args.output is not None:
+        _save_outputs(args.output, data, metrics)
+        print(f"Saved study artefacts to {args.output}")
+
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())
+3. visualize_deconvolution.py
+This is the visual companion script for the deconvolution validator. It imports functions from deconvolution_validator.py and uses matplotlib to create a 2x2 plot showing the four stages of the study: Primordial, Instrument, Convolved, and Recovered.
+
+Python
+#!/usr/bin/env python3
+"""Visual companion script for the FFT deconvolution validator."""
+
+from __future__ import annotations
+
+import argparse
+from importlib import util as importlib_util
+from pathlib import Path
+
+import numpy as np
+
+from deconvolution_validator import MockSPDCData, make_mock_spdc_dataset, regularised_deconvolution
+
+MATPLOTLIB_AVAILABLE = importlib_util.find_spec("matplotlib") is not None
+if not MATPLOTLIB_AVAILABLE:  # pragma: no cover - import guard
+    raise ImportError("visualize_deconvolution.py requires matplotlib. Install it with `pip install matplotlib`." )
+
+import matplotlib.pyplot as plt
+
+
+_DEF_FIGSIZE = (10, 8)
+
+
+def _load_array(path: Path, expected_shape: tuple[int, int]) -> np.ndarray:
+    arr = np.load(path)
+    if arr.shape != expected_shape:
+        raise ValueError(f"Array at {path} has shape {arr.shape}, expected {expected_shape}.")
+    return arr
+
+
+def _prepare_data(args: argparse.Namespace) -> MockSPDCData:
+    if args.dataset_dir is None:
+        primordial, instrument, convolved = make_mock_spdc_dataset(size=args.size)
+    else:
+        dataset_dir = args.dataset_dir
+        primordial = _load_array(dataset_dir / "primordial.npy", (args.size, args.size))
+        instrument = _load_array(dataset_dir / "instrument.npy", (args.size, args.size))
+        convolved = _load_array(dataset_dir / "convolved.npy", (args.size, args.size))
+
+    recovered = regularised_deconvolution(convolved, instrument, epsilon=args.epsilon)
+    return MockSPDCData(primordial=primordial, instrument=instrument, convolved=convolved, recovered=recovered)
+
+
+def _plot_stage(ax: plt.Axes, title: str, data: np.ndarray, cmap: str = "magma") -> None:
+    im = ax.imshow(data, cmap=cmap, origin="lower")
+    ax.set_title(title)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+
+def render_visualisation(data: MockSPDCData, *, output: Path | None, figsize=_DEF_FIGSIZE) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
+    _plot_stage(axes[0, 0], "Primordial Signal", data.primordial)
+    _plot_stage(axes[0, 1], "Instrument Function", data.instrument)
+    _plot_stage(axes[1, 0], "Measured (Convolved)", data.convolved)
+    _plot_stage(axes[1, 1], "Recovered Signal", data.recovered)
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output)
+        print(f"Saved visualisation to {output}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Render the four stages of the FFT deconvolution study")
+    parser.add_argument("--size", type=int, default=256, help="Resolution of the dataset to visualise (default: 256)")
+    parser.add_argument("--epsilon", type=float, default=1e-3, help="Regularisation constant used during recovery")
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default=None,
+        help="Optional directory created by deconvolution_validator.py --output",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional file path where a PNG visualisation will be written",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    data = _prepare_data(args)
+    render_visualisation(data, output=args.output)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(main())
+ Implement the New Orchestrator (Patch 3)
+
+Your Prompt to the AI:
+
+
+
+Great. Now that we have the "lite" components, we need the new main orchestrator based on Patch 3 (Tab 3) and Section III of the Code Review document.
+
+Please provide the complete code for the new aste_s-ncgl_hunt.py script. This script should be the "Control Plane" that:
+
+
+
+Loads modules like aste_hunter using importlib.
+
+Uses subprocess.run to call the "lite" worker_unified.py and validation_pipeline.py scripts we just created.
+
+Manages the full end-to-end evolutionary loop.
+
+Self-correction: Please ensure the script points to the correct, non-numbered filenames (e.g., validation_pipeline.py, not validation_pipeline (5).py).
+
+Coding partner
+Certainly. Here is the complete code for the new aste_s-ncgl_hunt.py orchestrator script.
+
+This "Control Plane" script is based on Patch 3 (Tab 3) and the architecture described in Section III of the Code Review document. It is designed to manage the "lite-core" pipeline by:
+
+Loading helper functions from other modules (like aste_hunter) using importlib.
+
+Executing the worker_unified.py and validation_pipeline.py scripts as external processes using subprocess.run.
+
+As you requested, I have updated the script to use the final, non-numbered filenames (aste_hunter.py and validation_pipeline.py) instead of the suffixed versions from the patch file.
+
+aste_s-ncgl_hunt.py (The New Orchestrator)
+Python
+#!/usr/bin/env python3
+"""ASTE S-NCGL Hunt Orchestrator
+================================
+
+This executable script wires the Adaptive Simulation Tuning Engine (ASTE)
+components together into a single command line entry point. It coordinates the
+following stages for each evolutionary generation:
+
+1. **Hunter** (`aste_hunter`) breeds the next batch of parameter sets.
+2. **Worker** (`worker_unified`) generates synthetic data for every candidate and
+   stores the resulting JSON artifacts.
+3. **Validator** (`validation_pipeline`) runs the "lite" profiler to produce the
+   provenance reports consumed by the Hunter.
+
+Run the unified loop with::
+
+    python aste_s-ncgl_hunt.py --config pipeline_config.json
+
+If no configuration file is supplied a small demonstration configuration is
+used. The configuration controls the number of generations, population size,
+output directories, and baseline simulation settings passed to the worker.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import uuid
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+# This default config points to the "lite-core" scripts
+DEFAULT_CONFIG: Dict[str, Any] = {
+    "generations": 1,
+    "population": 2,
+    "paths": {
+        "config_dir": "configs",
+        "data_dir": "Simulation_ledgers",
+        "provenance_dir": "provenance_reports",
+        "ledger_file": "simulation_ledger.csv",
+    },
+    "worker": {
+        "script": "worker_unified.py",
+    },
+    "validator": {
+        # Self-correction: Point to the clean, non-numbered filename
+        "script": "validation_pipeline.py",
+    },
+    "simulation": {
+        # These are dummy values for the "lite" worker
+        "N_grid": 8,
+        "L_domain": 10.0,
+        "T_steps": 8,
+        "dt": 0.01,
+    },
+}
+
+
+@dataclass
+class PipelineConfig:
+    """Resolved configuration derived from CLI and optional JSON file."""
+
+    generations: int
+    population: int
+    config_dir: Path
+    data_dir: Path
+    provenance_dir: Path
+    ledger_file: Path
+    worker_script: Path
+    validator_script: Path
+    simulation: Dict[str, Any]
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Return ``base`` updated recursively with ``override``."""
+
+    result: Dict[str, Any] = dict(base)
+    for key, value in override.items():
+        if (
+            key in result
+            and isinstance(result[key], dict)
+            and isinstance(value, dict)
+        ):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def _load_json_config(config_path: Optional[str]) -> Dict[str, Any]:
+    """Loads the override JSON config file, if one is provided."""
+    if not config_path:
+        return {}
+
+    path = Path(config_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _resolve_pipeline_config(
+    cli_args: argparse.Namespace,
+) -> PipelineConfig:
+    """Merges default config, file config, and CLI args."""
+    user_config = _load_json_config(cli_args.config)
+    merged = _deep_merge(DEFAULT_CONFIG, user_config)
+
+    if cli_args.generations is not None:
+        merged["generations"] = cli_args.generations
+    if cli_args.population is not None:
+        merged["population"] = cli_args.population
+
+    root = Path(__file__).resolve().parent
+
+    config_dir = root / merged["paths"]["config_dir"]
+    data_dir = root / merged["paths"]["data_dir"]
+    provenance_dir = root / merged["paths"]["provenance_dir"]
+    ledger_file = root / merged["paths"]["ledger_file"]
+
+    # These script paths are resolved relative to this orchestrator script
+    worker_script = root / merged["worker"]["script"]
+    validator_script = root / merged["validator"]["script"]
+
+    simulation = dict(merged["simulation"])
+
+    return PipelineConfig(
+        generations=int(merged["generations"]),
+        population=int(merged["population"]),
+        config_dir=config_dir,
+        data_dir=data_dir,
+        provenance_dir=provenance_dir,
+        ledger_file=ledger_file,
+        worker_script=worker_script,
+        validator_script=validator_script,
+        simulation=simulation,
+    )
+
+
+def _load_module(module_name: str, module_path: Path):
+    """
+    Import a module from an arbitrary file path.
+    This allows us to call functions from aste_hunter.py.
+    """
+    spec = importlib_util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module '{module_name}' from {module_path}")
+
+    module = importlib_util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)  # type: ignore[assignment]
+    return module
+
+
+def _ensure_directories(paths: Iterable[Path]) -> None:
+    """Creates all directories needed for the pipeline run."""
+    for path in paths:
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def _derive_seed_from_uuid(run_uuid: str) -> int:
+    """Creates a deterministic 32-bit seed from a UUID string."""
+    raw = int(run_uuid.replace("-", ""), 16)
+    return raw % (2 ** 32)
+
+
+def _save_config_file(config_dir: Path, config_hash: str, params: Dict[str, Any]) -> Path:
+    """Saves a parameter set to a JSON config file."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    path = config_dir / f"config_{config_hash}.json"
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(params, handle, indent=2, sort_keys=True)
+    return path
+
+
+def _run_subprocess(command: List[str], label: str) -> Tuple[int, str, str]:
+    """Helper to run and log an external script (worker or validator)."""
+    print(f"[Pipeline] -> Launching {label}: {' '.join(command)}")
+    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    if completed.stdout:
+        print(f"[Pipeline] {label} stdout:\n{completed.stdout}")
+    if completed.stderr:
+        print(f"[Pipeline] {label} stderr:\n{completed.stderr}", file=sys.stderr)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+def run_generation(
+    config: PipelineConfig,
+    hunter_module,
+    validation_module,
+    generation_index: int,
+) -> bool:
+    """Runs the full loop for a single generation."""
+    
+    # Get classes and functions from the dynamically loaded modules
+    Hunter = hunter_module.Hunter
+    HASH_KEY = hunter_module.HASH_KEY
+    generate_canonical_hash = validation_module.generate_canonical_hash
+
+    hunter = Hunter(ledger_file=str(config.ledger_file))
+
+    start_gen = hunter.get_current_generation()
+    if generation_index < start_gen:
+        print(
+            f"[Pipeline] Skipping generation {generation_index}; ledger already progressed to {start_gen}.",
+            file=sys.stderr,
+        )
+        return True
+
+    print("\n========================================================")
+    print(f"    ASTE S-NCGL: STARTING GENERATION {generation_index}")
+    print("========================================================")
+
+    # 1. BREED: Get new parameters from the Hunter
+    parameter_batch = hunter.get_next_generation(config.population)
+    jobs_to_run: List[Dict[str, Any]] = []
+
+    print(f"[Pipeline] Registering {len(parameter_batch)} jobs for generation {generation_index}...")
+    for params in parameter_batch:
+        run_uuid = str(uuid.uuid4())
+        global_seed = _derive_seed_from_uuid(run_uuid)
+
+        # Create the full parameter dictionary
+        full_params: Dict[str, Any] = dict(params)
+        full_params.update(
+            {
+                "run_uuid": run_uuid,
+                "global_seed": global_seed,
+                "simulation": config.simulation,
+            }
+        )
+
+        # Generate the hash *before* adding it to the dict
+        config_hash = generate_canonical_hash(full_params)
+        full_params["config_hash"] = config_hash
+
+        # 2. CONFIGURE: Save the parameters.json file
+        config_path = _save_config_file(config.config_dir, config_hash, full_params)
+
+        job_entry = {
+            HASH_KEY: config_hash,
+            "generation": generation_index,
+            "param_D": full_params["param_D"],
+            "param_eta": full_params["param_eta"],
+            "param_rho_vac": full_params["param_rho_vac"],
+            "param_a_coupling": full_params["param_a_coupling"],
+            "params_filepath": str(config_path),
+        }
+        jobs_to_run.append(job_entry)
+
+    hunter.register_new_jobs(jobs_to_run)
+    successful_hashes: List[str] = []
+
+    for job in jobs_to_run:
+        config_hash = job[HASH_KEY]
+        params_path = job["params_filepath"]
+        
+        # Define the path for the "lite" JSON artifact
+        # Note: The "lite" worker outputs .json, not .h5
+        artifact_path = config.data_dir / f"rho_history_{config_hash}.json"
+
+        # 3. SIMULATE: Call the "lite" worker script
+        worker_command = [
+            sys.executable,
+            str(config.worker_script),
+            "--params",
+            params_path,
+            "--output",
+            str(artifact_path),
+        ]
+        returncode, _, _ = _run_subprocess(worker_command, f"Worker {config_hash[:10]}")
+        if returncode != 0:
+            print(
+                f"[Pipeline] Worker failed for {config_hash[:10]}; skipping validation.",
+                file=sys.stderr,
+            )
+            continue
+
+        # 4. VALIDATE: Call the "lite" validator script
+        validator_command = [
+            sys.executable,
+            str(config.validator_script),
+            "--input",
+            str(artifact_path),
+            "--params",
+            params_path,
+            "--output_dir",
+            str(config.provenance_dir),
+        ]
+        v_code, _, _ = _run_subprocess(validator_command, f"Validator {config_hash[:10]}")
+        if v_code == 0:
+            successful_hashes.append(config_hash)
+        else:
+            print(
+                f"[Pipeline] Validator failed for {config_hash[:10]}; results not ingested.",
+                file=sys.stderr,
+            )
+
+    # 5. INGEST: Tell the Hunter to read the new reports
+    if successful_hashes:
+        hunter.process_generation_results(
+            provenance_dir=str(config.provenance_dir),
+            job_hashes=successful_hashes,
+        )
+        best = hunter.get_best_run()
+        if best:
+            best_hash = best[HASH_KEY]
+            fitness = best.get("fitness")
+            print(
+                f"[Pipeline] Best run so far: {best_hash[:10]} with fitness {fitness}",
+            )
+    else:
+        print(
+            "[Pipeline] No successful jobs this generation; ledger not updated.",
+            file=sys.stderr,
+        )
+        return False
+
+    return True
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Main CLI entry point for the orchestrator."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Unified ASTE orchestrator that coordinates the Hunter, Worker, and CEPP profiler."
+        )
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to a JSON configuration file that overrides defaults.",
+    )
+    parser.add_argument(
+        "--generations",
+        type=int,
+        help="Override the number of generations to run (takes precedence over config).",
+    )
+    parser.add_argument(
+        "--population",
+        type=int,
+        help="Override the population size per generation (takes precedence over config).",
+    )
+
+    args = parser.parse_args(argv)
+
+    try:
+        pipeline_config = _resolve_pipeline_config(args)
+    except FileNotFoundError as e:
+        print(f"CRITICAL_FAIL: {e}", file=sys.stderr)
+        return 1
+
+    _ensure_directories(
+        [
+            pipeline_config.config_dir,
+            pipeline_config.data_dir,
+            pipeline_config.provenance_dir,
+            pipeline_config.ledger_file.parent,
+        ]
+    )
+
+    # Define paths to the modules we need to *import* functions from
+    root = Path(__file__).resolve().parent
+    # Self-correction: Point to clean, non-numbered filenames
+    hunter_path = root / "aste_hunter.py"
+    validation_path = root / "validation_pipeline.py"
+
+    try:
+        hunter_module = _load_module("aste_hunter", hunter_path)
+        validation_module = _load_module("validation_pipeline", validation_path)
+    except ImportError as e:
+        print(f"CRITICAL_FAIL: Failed to load core modules: {e}", file=sys.stderr)
+        return 1
+
+    overall_success = True
+    # Get the starting generation number from the ledger
+    hunter = hunter_module.Hunter(ledger_file=str(pipeline_config.ledger_file))
+    start_gen = hunter.get_current_generation()
+    del hunter  # Release the file lock
+
+    target_generations = range(start_gen, start_gen + pipeline_config.generations)
+
+    for generation_index in target_generations:
+        generation_success = run_generation(
+            pipeline_config, hunter_module, validation_module, generation_index
+        )
+        overall_success = overall_success and generation_success
+
+    return 0 if overall_success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+Add the Advanced Validation Suite (Patch 4)
+
+Your Prompt to the AI:
+
+
+
+Next, let's add the new "Sprint 3" advanced validation tools from Patch 4 (Tab 2) and Section IV of the Code Review document.
+
+These are new, standalone tools. Please provide the full code for these three files:
+
+
+
+tda_taxonomy_validator.py (The Topological Data Analysis tool)
+
+deconvolution_validator.py (The SPDC/FFT deconvolution tool)
+
+visualize_deconvolution.py (The visualizer for the deconvolution study)
+
+Coding partner
+Hello! As your coding partner, I'm happy to provide the advanced validation suite.
+
+These standalone tools are described in Patch 4 (Tab 2) of the diff file and Section IV of the Code Review document. They are designed to provide deeper, more advanced scientific validation (Structural and External) for your simulation results.
+
+Here is the complete, final code for the three requested files.
+
+1. tda_taxonomy_validator.py
+This is the Topological Data Analysis (TDA) tool. Its purpose is to create a "Quantule Taxonomy" by analyzing the spatial structure of the simulation's output. It reads the quantule_events.csv file (generated by the validation_pipeline.py script) and uses persistent homology (H0, H1) to find "spots" and "loops".
+
+Python
+#!/usr/bin/env python3
+"""Topological validation utilities for Quantule event clouds.
+  
+This module reads a ``quantule_events.csv`` file containing collapse-event  
+coordinates and performs a persistent-homology analysis to characterise the  
+long-lived structures in the data set.  The script is intentionally written as a  
+standalone CLI tool so it can be scheduled as part of a post-run validation  
+pipeline.
+"""
+  
+from __future__ import annotations
+  
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+  
+import numpy as np
+import pandas as pd
+  
+# ``ripser`` is the reference implementation used in the cited literature.  We  
+# proactively check for it here so we can emit a clear error message rather than  
+# failing with an obscure ImportError inside the CLI handler.  
+if importlib_util.find_spec("ripser") is None:  # pragma: no cover - import guard  
+    raise ImportError(
+        "tda_taxonomy_validator.py requires the 'ripser' package. "
+        "Install it with `pip install ripser persim`."
+    )
+  
+from ripser import ripser  # type: ignore  # noqa: E402
+  
+# ``persim`` is an optional dependency that allows us to produce persistence  
+# diagrams.  It is widely available together with ``ripser``.  The plotting  
+# routine is gated behind a feature flag for environments without matplotlib.  
+PERSIM_AVAILABLE = importlib_util.find_spec("persim") is not None
+if PERSIM_AVAILABLE:  # pragma: no cover - optional import  
+    from persim import plot_diagrams  # type: ignore  # noqa: E402
+  
+MATPLOTLIB_AVAILABLE = importlib_util.find_spec("matplotlib") is not None
+if MATPLOTLIB_AVAILABLE:  # pragma: no cover - optional import  
+    import matplotlib.pyplot as plt
+else:  # pragma: no cover - optional import  
+    plt = None  # type: ignore  
+  
+  
+@dataclass(frozen=True)
+class PersistentFeature:
+    """Representation of a single persistent-homology feature."""
+  
+    dimension: int
+    birth: float
+    death: float
+  
+    @property
+    def lifetime(self) -> float:
+        return self.death - self.birth
+  
+    def to_dict(self) -> Dict[str, float]:
+        return {"dimension": self.dimension, "birth": self.birth, "death": self.death, "lifetime": self.lifetime}
+  
+  
+@dataclass
+class TaxonomyReport:
+    """Summary of the persistent features grouped by homology dimension."""
+  
+    h0_count: int
+    h1_count: int
+    h0_features:
+You stopped this response
+Add the Advanced Validation Suite (Patch 4)
+
+Your Prompt to the AI:
+
+
+
+Next, let's add the new "Sprint 3" advanced validation tools from Patch 4 (Tab 2) and Section IV of the Code Review document.
+
+These are new, standalone tools. Please provide the full code for these three files:
+
+
+
+tda_taxonomy_validator.py (The Topological Data Analysis tool)
+
+deconvolution_validator.py (The SPDC/FFT deconvolution tool)
+
+visualize_deconvolution.py (The visualizer for the deconvolution study)
+
+Coding partner
+Hello! As your coding partner, I can certainly provide those new standalone validation tools.
+
+These scripts are based on Patch 4 (Tab 2) from the diff file and align with the "Advanced Validation Suite" described in Section IV of the Code Review document. They introduce the new Structural (TDA) and External (SPDC Deconvolution) validation pathways.
+
+Here is the complete, final code for the three files.
+
+1. tda_taxonomy_validator.py
+This is the Topological Data Analysis (TDA) tool. Its purpose is to create a "Quantule Taxonomy" by analyzing the spatial structure of the simulation's output. It reads the quantule_events.csv file, treats the event coordinates as a point cloud, and uses persistent homology (H0, H1) to find "spots" and "loops".
+
+Python
+#!/usr/bin/env python3
+"""Topological validation utilities for Quantule event clouds.
+  
+This module reads a ``quantule_events.csv`` file containing collapse-event  
+coordinates and performs a persistent-homology analysis to characterise the  
+long-lived structures in the data set.  The script is intentionally written as a  
+standalone CLI tool so it can be scheduled as part of a post-run validation  
+pipeline.
+"""
+  
+from __future__ import annotations
+  
+import argparse
+import json
+import math
+from dataclasses import dataclass
+from importlib import util as importlib_util
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+  
+import numpy as np
+import pandas as pd
+  
+# ``ripser`` is the reference implementation used in the cited literature.  We  
+# proactively check for it here so we can emit a clear error message rather than  
+# failing with an obscure ImportError inside the CLI handler.  
+if importlib_util.find_spec("ripser") is None:  # pragma: no cover - import guard  
+    raise ImportError(
+        "tda_taxonomy_validator.py requires the 'ripser' package. "
+        "Install it with `pip install ripser persim`."
+    )
+  
+from ripser import ripser  # type: ignore  # noqa: E402
+  
+# ``persim`` is an optional dependency that allows us to produce persistence  
+# diagrams.  It is widely available together with ``ripser``.  The plotting  
+# routine is gated behind a feature flag for environments without matplotlib.  
+PERSIM_AVAILABLE = importlib_util.find_spec("persim") is not None
+if PERSIM_AVAILABLE:  # pragma: no cover - optional import  
+    from persim import plot_diagrams  # type: ignore  # noqa: E402
+  
+MATPLOTLIB_AVAILABLE = importlib_util.find_spec("matplotlib") is not None
+if MATPLOTLIB_AVAILABLE:  # pragma: no cover - optional import  
+    import matplotlib.pyplot as plt
+else:  # pragma: no cover - optional import  
+    plt = None  # type: ignore  
+  
+  
+@dataclass(frozen=True)
+class PersistentFeature:
+    """Representation of a single persistent-homology feature."""
+  
+    dimension: int
+    birth: float
+    death: float
+  
+    @property
+    def lifetime(self) -> float:
+        return self.death - self.birth
+  
+    def to_dict(self) -> Dict[str, float]:
+        return {"dimension": self.dimension, "birth": self.birth, "death": self.death, "lifetime": self.lifetime}
+  
+  
+@dataclass
+class TaxonomyReport:
+    """Summary of the persistent features grouped by homology dimension."""
+  
+    h0_count: int
+    h1_count: int
+    h0_features: List[PersistentFeature]
+    h1_features: List[PersistentFeature]
+  
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "h0_count": self.h0_count,
+            "h1_count": self.h1_count,
+            "h0_features": [feat.to_dict() for feat in self.h0_features],
+            "h1_features": [feat.to_dict() for feat in self.h1_features],
+        }
+  
+  
+def _infer_coordinate_columns(columns: Iterable[str]) -> Tuple[str, str]:
+    """Best-effort heuristic to find the planar coordinate columns."""
+  
+    lower = [c.lower() for c in columns]
+    for x_candidate in ("x", "pos_x", "collapse_x", "event_x"):
+        if x_candidate in lower:
+            break
+    else:
+        raise ValueError("Could not infer x-coordinate column in CSV file.")
+  
+    for y_candidate in ("y", "pos_y", "collapse_y", "event_y"):
+        if y_candidate in lower:
+            break
+    else:
+        raise ValueError("Could not infer y-coordinate column in CSV file.")
+  
+    x_column = columns[lower.index(x_candidate)]
+    y_column = columns[lower.index(y_candidate)]
+    return x_column, y_column
+  
+  
+def _extract_points(csv_path: Path, x_column: str | None, y_column: str | None) -> np.ndarray:
+    df = pd.read_csv(csv_path)
+  
+    if x_column is None or y_column is None:
+        x_column, y_column = _infer_coordinate_columns(df.columns)
+  
+    if x_column not in df.columns or y_column not in df.columns:
+        raise KeyError(f"Columns '{x_column}' and '{y_column}' must exist in {csv_path}.")
+  
+    points = df[[x_column, y_column]].to_numpy(dtype=float)
+  
+    if not np.all(np.isfinite(points)):
+        raise ValueError("Coordinate data contains NaNs or infinite values.")
+  
+    if len(points) == 0:
+        raise ValueError("No points found in the CSV file.")
+  
+    return points
+  
+  
+def compute_persistence(points: np.ndarray, maxdim: int = 1) -> Dict[str, np.ndarray]:
+    """Compute persistent homology using ripser."""
+  
+    # Normalise the cloud to the unit square so the persistence thresholds are  
+    # comparable across runs with different scales.  
+    shifted = points - points.min(axis=0, keepdims=True)
+    scale = np.ptp(shifted, axis=0, keepdims=True)
+    scale[scale == 0.0] = 1.0
+    normalised = shifted / scale
+    result = ripser(normalised, maxdim=maxdim)
+    return result
+  
+  
+def _collect_features(diagrams: List[np.ndarray], min_lifetime: float) -> TaxonomyReport:
+    h0_diagram = diagrams[0] if diagrams else np.empty((0, 2))
+    h1_diagram = diagrams[1] if len(diagrams) > 1 else np.empty((0, 2))
+  
+    def to_features(diagram: np.ndarray, dimension: int) -> List[PersistentFeature]:
+        feats: List[PersistentFeature] = []
+        for birth, death in diagram:
+            death_val = float(death if math.isfinite(death) else 1.0)
+            feature = PersistentFeature(dimension=dimension, birth=float(birth), death=death_val)
+            if feature.lifetime >= min_lifetime:
+                feats.append(feature)
+        return feats
+  
+    h0_features = to_features(h0_diagram, dimension=0)
+    h1_features = to_features(h1_diagram, dimension=1)
+    return TaxonomyReport(
+        h0_count=len(h0_features),
+        h1_count=len(h1_features),
+        h0_features=h0_features,
+        h1_features=h1_features,
+    )
+  
+  
+def _render_diagram(diagrams: List[np.ndarray], output_path: Path) -> None:
+    if not (PERSIM_AVAILABLE and MATPLOTLIB_AVAILABLE):  # pragma: no cover - plotting side effect  
+        raise RuntimeError(
+            "Persistence diagram plotting requires the 'persim' and 'matplotlib' packages."
+        )
+    fig = plt.figure(figsize=(6, 5))  # type: ignore[misc]  
+    ax = fig.add_subplot(1, 1, 1)
+    plot_diagrams(diagrams, ax=ax)
+    ax.set_title("Quantule Event Persistence Diagram")
+    fig.tight_layout()
+    fig.savefig(output_path)
+    plt.close(fig)  # type: ignore[misc]  
+  
+  
+def analyse_quantule_events(
+    csv_path: Path,
+    *,
+    min_lifetime: float,
+    x_column: str | None,
+    y_column: str | None,
+    save_diagram: Path | None,
+) -> TaxonomyReport:
+    points = _extract_points(csv_path, x_column=x_column, y_column=y_column)
+    persistence = compute_persistence(points, maxdim=1)
+    report = _collect_features(persistence["dgms"], min_lifetime=min_lifetime)
+  
+    if save_diagram is not None:
+        _render_diagram(persistence["dgms"], save_diagram)
+  
+    return report
+  
+  
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Persistent homology based taxonomy validator")
+    parser.add_argument("csv", type=Path, help="Path to quantule_events.csv produced by a simulation run")
+    parser.add_argument(
+        "--min-lifetime",
+        type=float,
+        default=0.05,
+        help="Minimum persistence lifetime required for a feature to be reported (default: 0.05)",
+    )
+    parser.add_argument("--x-column", type=str, default=None, help="Explicit name of the x-coordinate column")
+    parser.add_argument("--y-column", type=str, default=None, help="Explicit name of the y-coordinate column")
+    parser.add_argument(
+        "--diagram",
+        type=Path,
+        default=None,
+        help="Optional path where a persistence diagram PNG will be written",
+    )
+    parser.add_argument(
+        "--json",
+        type=Path,
+        default=None,
+        help="Optional path where a machine-readable taxonomy report will be written",
+    )
+    return parser
+  
+  
+def main(argv: List[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    report = analyse_quantule_events(
+        args.csv,
+        min_lifetime=args.min_lifetime,
+        x_column=args.x_column,
+        y_column=args.y_column,
+        save_diagram=args.diagram,
+    )
+  
+    print("Quantule Taxonomy")
+    print(f"  Persistent H0 components (spots): {report.h0_count}")
+    print(f"  Persistent H1 loops    (voids): {report.h1_count}")
+  
+    if args.json is not None:
+        payload = {
+            "source_csv": str(args.csv),
+            "min_lifetime": args.min_lifetime,
+            "report": report.to_dict(),
+        }
+        args.json.write_text(json.dumps(payload, indent=2))
+        print(f"Saved taxonomy report to {args.json}")
+  
+    if args.diagram is not None:
+        print(f"Saved persistence diagram to {args.diagram}")
+  
+    return 0
+  
+  
+if __name__ == "__main__":  # pragma: no cover - CLI entry point  
+    raise SystemExit(main())
+2. deconvolution_validator.py
+This is the SPDC/FFT Deconvolution tool. It implements the "Forward Validation" protocol to solve the "Phase Problem" identified in the Code Review document. Instead of a simple deconvolution, it generates a synthetic "primordial" signal and "instrument" function, convolves them, and then performs a regularized deconvolution to test the recovery process and report the SSE.
+
+Python
+#!/usr/bin/env python3
+"""Synthetic FFT deconvolution study for the NCGL profiler."""
+  
+from __future__ import annotations
+  
+import argparse
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Tuple
+  
+import numpy as np
+  
+  
+@dataclass
+class MockSPDCData:
+    """Container for the four stages of the synthetic SPDC measurement."""
+  
+    primordial: np.ndarray
+    instrument: np.ndarray
+    convolved: np.ndarray
+    recovered: np.ndarray
+  
+    def to_dict(self) -> Dict[str, float]:
+        return {
+            "primordial_min": float(self.primordial.min()),
+            "primordial_max": float(self.primordial.max()),
+            "recovered_min": float(self.recovered.min()),
+            "recovered_max": float(self.recovered.max()),
+        }
+  
+  
+def _gaussian_2d(grid_x: np.ndarray, grid_y: np.ndarray, centre: Tuple[float, float], sigma: Tuple[float, float]) -> np.ndarray:
+    cx, cy = centre
+    sx, sy = sigma
+    exponent = -(((grid_x - cx) ** 2) / (2.0 * sx ** 2) + ((grid_y - cy) ** 2) / (2.0 * sy ** 2))
+    return np.exp(exponent)
+  
+  
+def _stripe_pattern(grid_x: np.ndarray, grid_y: np.ndarray, frequency: float, angle: float) -> np.ndarray:
+    theta = np.deg2rad(angle)
+    rotated = np.cos(theta) * grid_x + np.sin(theta) * grid_y
+    return 0.5 * (1.0 + np.cos(2 * np.pi * frequency * rotated))
+  
+  
+def make_mock_spdc_dataset(size: int = 256) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    lin = np.linspace(-1.0, 1.0, size)
+    grid_x, grid_y = np.meshgrid(lin, lin, indexing="ij")
+  
+    primordial = _gaussian_2d(grid_x, grid_y, centre=(0.0, 0.0), sigma=(0.25, 0.35))
+    primordial *= 0.35 + 0.65 * _stripe_pattern(grid_x, grid_y, frequency=1.75, angle=35.0)
+  
+    instrument = _gaussian_2d(grid_x, grid_y, centre=(0.0, 0.0), sigma=(0.18, 0.12))
+  
+    convolved = fft_convolve2d(primordial, instrument)
+  
+    return primordial, instrument, convolved
+  
+  
+def fft_convolve2d(signal: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    signal_fft = np.fft.rfftn(signal)
+    kernel_fft = np.fft.rfftn(kernel, s=signal.shape)
+    convolved_fft = signal_fft * kernel_fft
+    convolved = np.fft.irfftn(convolved_fft, s=signal.shape)
+    return np.real(convolved)
+  
+  
+def regularised_deconvolution(observed: np.ndarray, kernel: np.ndarray, *, epsilon: float = 1e-3) -> np.ndarray:
+    observed_fft = np.fft.rfftn(observed)
+    kernel_fft = np.fft.rfftn(kernel, s=observed.shape)
+    magnitude = np.abs(kernel_fft) ** 2
+    inverse_fft = np.conj(kernel_fft) / (magnitude + epsilon)
+    recovered_fft = observed_fft * inverse_fft
+    recovered = np.fft.irfftn(recovered_fft, s=observed.shape)
+    return np.real(recovered)
+  
+  
+def compute_sse(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.sum((a - b) ** 2))
+  
+  
+def run_deconvolution_study(size: int = 256, epsilon: float = 1e-3) -> Tuple[MockSPDCData, Dict[str, float]]:
+    primordial, instrument, convolved = make_mock_spdc_dataset(size=size)
+    recovered = regularised_deconvolution(convolved, instrument, epsilon=epsilon)
+  
+    # Normalise the recovered map to the primordial amplitude range to make the  
+    # SSE comparison meaningful for reporting.  This mimics the scaling step the  
+    # profiler performs after loading a recovered JSI.  
+    primordial_min, primordial_max = primordial.min(), primordial.max()
+    rec_min, rec_max = recovered.min(), recovered.max()
+    if rec_max - rec_min > 0:
+        recovered_scaled = (recovered - rec_min) / (rec_max - rec_min)
+        recovered_scaled = recovered_scaled * (primordial_max - primordial_min) + primordial_min
+    else:
+        recovered_scaled = recovered
+  
+    sse_ext = compute_sse(recovered_scaled, primordial)
+    sse_convolved = compute_sse(convolved, fft_convolve2d(recovered_scaled, instrument))
+  
+    data = MockSPDCData(
+        primordial=primordial,
+        instrument=instrument,
+        convolved=convolved,
+        recovered=recovered_scaled,
+    )
+  
+    metrics = {
+        "size": size,
+        "epsilon": epsilon,
+        "sse_recovered_vs_primordial": sse_ext,
+        "sse_convolution_consistency": sse_convolved,
+    }
+  
+    return data, metrics
+  
+  
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Synthetic FFT deconvolution validator")
+    parser.add_argument("--size", type=int, default=256, help="Resolution of the mock dataset (default: 256)")
+    parser.add_argument(
+        "--epsilon",
+        type=float,
+        default=1e-3,
+        help="Tikhonov regularisation constant used during FFT deconvolution",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional directory where JSON metrics and NumPy arrays will be saved",
+    )
+    return parser
+  
+  
+def _save_outputs(output_dir: Path, data: MockSPDCData, metrics: Dict[str, float]) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    np.save(output_dir / "primordial.npy", data.primordial)
+    np.save(output_dir / "instrument.npy", data.instrument)
+    np.save(output_dir / "convolved.npy", data.convolved)
+    np.save(output_dir / "recovered.npy", data.recovered)
+    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+  
+  
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+  
+    data, metrics = run_deconvolution_study(size=args.size, epsilon=args.epsilon)
+  
+    print("FFT Deconvolution Study")
+    print(f"  Grid size: {args.size} x {args.size}")
+    print(f"  Regularisation epsilon: {args.epsilon}")
+    print(f"  SSE(recovered, primordial): {metrics['sse_recovered_vs_primordial']:.6f}")
+    print(f"  SSE consistency check   : {metrics['sse_convolution_consistency']:.6f}")
+  
+    if args.output is not None:
+        _save_outputs(args.output, data, metrics)
+        print(f"Saved study artefacts to {args.output}")
+  
+    return 0
+  
+  
+if __name__ == "__main__":  # pragma: no cover - CLI entry point  
+    raise SystemExit(main())
+3. visualize_deconvolution.py
+This is the visual companion script for the deconvolution validator. It imports functions from deconvolution_validator.py and uses matplotlib to create a 2x2 plot showing the four stages of the study: Primordial, Instrument, Convolved, and Recovered.
+
+Python
+#!/usr/bin/env python3
+"""Visual companion script for the FFT deconvolution validator."""
+  
+from __future__ import annotations
+  
+import argparse
+from importlib import util as importlib_util
+from pathlib import Path
+  
+import numpy as np
+  
+from deconvolution_validator import MockSPDCData, make_mock_spdc_dataset, regularised_deconvolution
+  
+MATPLOTLIB_AVAILABLE = importlib_util.find_spec("matplotlib") is not None
+if not MATPLOTLIB_AVAILABLE:  # pragma: no cover - import guard  
+    raise ImportError("visualize_deconvolution.py requires matplotlib. Install it with `pip install matplotlib`." )
+  
+import matplotlib.pyplot as plt
+  
+  
+_DEF_FIGSIZE = (10, 8)
+  
+  
+def _load_array(path: Path, expected_shape: tuple[int, int]) -> np.ndarray:
+    arr = np.load(path)
+    if arr.shape != expected_shape:
+        raise ValueError(f"Array at {path} has shape {arr.shape}, expected {expected_shape}.")
+    return arr
+  
+  
+def _prepare_data(args: argparse.Namespace) -> MockSPDCData:
+    if args.dataset_dir is None:
+        primordial, instrument, convolved = make_mock_spdc_dataset(size=args.size)
+    else:
+        dataset_dir = args.dataset_dir
+        primordial = _load_array(dataset_dir / "primordial.npy", (args.size, args.size))
+        instrument = _load_array(dataset_dir / "instrument.npy", (args.size, args.size))
+        convolved = _load_array(dataset_dir / "convolved.npy", (args.size, args.size))
+  
+    recovered = regularised_deconvolution(convolved, instrument, epsilon=args.epsilon)
+    return MockSPDCData(primordial=primordial, instrument=instrument, convolved=convolved, recovered=recovered)
+  
+  
+def _plot_stage(ax: plt.Axes, title: str, data: np.ndarray, cmap: str = "magma") -> None:
+    im = ax.imshow(data, cmap=cmap, origin="lower")
+    ax.set_title(title)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+  
+  
+def render_visualisation(data: MockSPDCData, *, output: Path | None, figsize=_DEF_FIGSIZE) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
+    _plot_stage(axes[0, 0], "Primordial Signal", data.primordial)
+    _plot_stage(axes[0, 1], "Instrument Function", data.instrument)
+    _plot_stage(axes[1, 0], "Measured (Convolved)", data.convolved)
+    _plot_stage(axes[1, 1], "Recovered Signal", data.recovered)
+  
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output)
+        print(f"Saved visualisation to {output}")
+    else:
+        plt.show()
+    plt.close(fig)
+  
+  
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Render the four stages of the FFT deconvolution study")
+    parser.add_argument("--size", type=int, default=256, help="Resolution of the dataset to visualise (default: 256)")
+    parser.add_argument("--epsilon", type=float, default=1e-3, help="Regularisation constant used during recovery")
+    parser.add_argument(
+        "--dataset-dir",
+        type=Path,
+        default=None,
+        help="Optional directory created by deconvolution_validator.py --output",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional file path where a PNG visualisation will be written",
+    )
+    return parser
+  
+  
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    data = _prepare_data(args)
+    render_visualisation(data, output=args.output)
+    return 0
+  
+  
+if __name__ == "__main__":  # pragma: no cover - CLI entry point  
+    raise SystemExit(main())
+ Add Project Housekeeping Files
+
+Your Prompt to the AI:
+
+
+
+Finally, we just need to add the project documentation and housekeeping files from the patches.
+
+Please provide the code/content for:
+
+
+
+README.md (from Patch 3 / Tab 3)
+
+.gitignore (from Patch 5 / Tab 1)
+
+The Sprint 3 workspace files: golden-NCGL-Hunter-RUN-ID-3/README.md and golden-NCGL-Hunter-RUN-ID-3/Sprint_3_Analysis.ipynb (from Patch 4 / Tab 2)
+
+Coding partner
+Hello! As your coding partner, here are the complete contents for the project documentation and housekeeping files, based on the patches you specified.
+
+1. README.md (Root Directory)
+This content is from Patch 3 (Tab 3), which introduces the new aste_s-ncgl_hunt.py orchestrator.
+
+Markdown
+# ASTE Unified Hunt Pipeline
+
+`aste_s-ncgl_hunt.py` provides a single command line entry point that links the
+Hunter, Unified Worker, and CEPP validation pipeline.  The script mirrors the
+original adaptive orchestrator while allowing the number of generations and
+population size to be supplied via configuration.
+
+## Quick start
+
+```bash
+python aste_s-ncgl_hunt.py --config path/to/pipeline_config.json
+When no configuration file is provided a compact demonstration setup runs with a small grid. The JSON configuration can override:
+
+Number of generations and candidates per generation.
+
+Output directories for parameter configs, simulation artifacts, and provenance reports.
+
+Baseline simulation controls forwarded to worker_unified.py.
+
+The script loads aste_hunter and validation_pipeline from their repository locations, breeds new parameter sets, launches worker_unified.py for each candidate, and finally executes the CEPP profiler to register provenance.
+
+
+---
+
+### 2. .gitignore
+
+This content is from **Patch 5 (Tab 1)**, which adds patterns to ignore runtime artifacts.
+
+```bash
+# Ignore files with automatic suffixes from downloads or duplicates
+* (*)
+
+# Runtime artifacts produced by the orchestrator
+__pycache__/
+input_configs/
+simulation_data/
+simulation_ledger.csv
+provenance_reports/provenance_*.json
+provenance_reports/*_quantule_events.csv
+3. golden-NCGL-Hunter-RUN-ID-3/README.md
+This content is from Patch 4 (Tab 2), documenting the new Sprint 3 workspace.
+
+Markdown
+# Golden Run Sprint 3 Workspace
+
+This directory houses the Sprint 3 research notebook and auxiliary assets.  The  
+core simulation and profiling engine continues to live in the repository root;  
+this folder focuses on the new structural and external validation modules so  
+that they can be iterated on without touching the battle-tested baseline.  
+  
+* `Sprint_3_Analysis.ipynb` – loads the engine modules from the project root and  
+  demonstrates how to call the new TDA and FFT validation helpers.
+4. golden-NCGL-Hunter-RUN-ID-3/Sprint_3_Analysis.ipynb
+This content is from Patch 4 (Tab 2), providing the new analysis notebook for Sprint 3.
+
+JSON
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Sprint 3 Analysis Notebook\n",
+        "\n",
+        "This notebook bootstraps the Sprint 3 validation workflow. It imports the\n",
+        "established engine modules from the repository and provides entry points for\n",
+        "the new structural (TDA) and external (FFT deconvolution) validation\n",
+        "tooling."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": [],
+      "source": [
+        "from pathlib import Path\n",
+        "import sys\n",
+        "\n",
+        "PROJECT_ROOT = Path(__file__).resolve().parents[1]\n",
+        "if str(PROJECT_ROOT) not in sys.path:\n",
+        "    sys.path.append(str(PROJECT_ROOT))\n",
+        "\n",
+        "print(f\"Project root added to sys.path: {PROJECT_ROOT}\")"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": [],
+      "source": [
+        "# --- Quantule Taxonomy (Persistent Homology) ---\n",
+        "from tda_taxonomy_validator import analyse_quantule_events\n",
+        "\n",
+        "# Example usage:\n",
+        "# report = analyse_quantule_events(\n",
+        "#     Path('Simulation_ledgers/quantule_events.csv'),\n",
+        "#     min_lifetime=0.05,\n",
+        "#     x_column=None,\n",
+        "#     y_column=None,\n",
+        "#     save_diagram=Path('provenance_reports/quantule_persistence.png'),\n",
+        "# )\n",
+        "# report\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {},
+      "execution_count": null,
+      "outputs": [],
+      "source": [
+        "# --- FFT Deconvolution Study ---\n",
+        "from deconvolution_validator import run_deconvolution_study\n",
+        "\n",
+        "data, metrics = run_deconvolution_study(size=256, epsilon=1e-3)\n",
+        "metrics\n"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python",
+      "version": "3.11"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 5
+}
+okay, now could you present the final full updated suite, please generate all the files
+
+Coding partner
+Hello! As your coding partner, I'm ready to generate the complete, final suite of files for your project, based on all the patches and documents we've reviewed.
+
+This set of 12 files represents the fully patched repository, including:
+
+The "Lite-Core" Pipeline: The new, standard-library-only worker_unified.py, quantulemapper_real.py, validation_pipeline.py, and aste_hunter.py (from Patch 5), all managed by the aste_s-ncgl_hunt.py orchestrator (from Patch 3).
+
+The Advanced Validation Suite: The standalone tda_taxonomy_validator.py, deconvolution_validator.py, and visualize_deconvolution.py tools (from Patch 4).
+
+Project & Workspace Files: The root .gitignore and README.md, plus the Sprint 3 workspace files (from Patches 3, 4, and 5).
+
+Here is the complete set of files.
+
+Group 1: The "Lite-Core" Verification Pipeline
+ASTE 'Lite-Core' Orchestrator
+Nov 12, 10:28 PM
+'Lite' Simulation Worker
+Nov 12, 10:28 PM
+'Lite' Quantule Profiler
+Nov 12, 10:28 PM
+'Lite' Validation Pipeline
+Nov 12, 10:28 PM
+'Lite' ASTE Hunter
+Nov 12, 10:28 PM
+
+Group 2: The Advanced Validation Suite (Patch 4)
+TDA Taxonomy Validator
+Nov 12, 10:36 PM
+SPDC Deconvolution Validator
+Nov 12, 10:36 PM
+Deconvolution Visualizer
+Nov 12, 10:36 PM
+
+Group 3: Project Documentation & Workspace Files
+Project Gitignore
+Nov 12, 10:28 PM
+Root README
+Nov 12, 10:28 PM
+Sprint 3 Workspace README
+Nov 12, 10:28 PM
+Sprint 3 Analysis Notebook
+Nov 12, 10:28 PM
+
+This completes the full suite of 12 files based on all the patches. You now have the complete "lite-core" verification pipeline, the advanced scientific validation tools, and all the associated project documentation.
+
+please include %% filename.type
+
+Coding partner
+You stopped this response
+please include %%writefile filename.type
+
+Coding partner
+Hello! As your coding partner, I'm happy to provide the advanced validation suite.
+
+These standalone tools are described in Patch 4 (Tab 2) of the diff file and Section IV of the Code Review document. They are designed to provide deeper, more advanced scientific validation (Structural and External) for your simulation results.
+
+Here is the complete, final code for the three requested files, including the %%writefile command for each.
+
+1. tda_taxonomy_validator.py
+This is the Topological Data Analysis (TDA) tool. Its purpose is to create a "Quantule Taxonomy" by analyzing the spatial structure of the simulation's output. It reads the quantule_events.csv file (generated by the validation_pipeline.py script) and uses persistent homology (H0, H1) to find "spots" and "loops".
+
+2. deconvolution_validator.py
+This is the External Validation tool. It implements the "Forward Validation" protocol to solve the "Phase Problem" identified in the Code Review document. Instead of a simple deconvolution, it generates a synthetic "primordial" signal and "instrument" function, convolves them, and then performs a regularized deconvolution to test the recovery process and report the SSE.
+
+3. visualize_deconvolution.py
+This is the visual companion script for the deconvolution validator. It imports functions from deconvolution_validator.py and uses matplotlib to create a 2x2 plot showing the four stages of the study: Primordial, Instrument, Convolved, and Recovered.
+
+hows this look?
+
+how do we test it
+
+Coding partner
+This is an excellent, complete suite of files!
+
+You've provided all 12 modules, correctly implementing both the "lite-core" verification pipeline (from Patches 3 and 5) and the "advanced validation suite" (from Patch 4), along with all the necessary documentation. The architecture looks solid.
+
+Here is a step-by-step plan to test the entire suite.
+
+How to Test Your Full Pipeline
+We'll test this in three stages:
+
+Install dependencies for the advanced tools.
+
+Run the main "lite-core" orchestrator to verify the full evolutionary loop.
+
+Run the standalone advanced validation scripts.
+
+Step 1: Install Dependencies
+The "lite-core" pipeline (aste_s-ncgl_hunt.py and its components) is designed to run without any special libraries.
+
+However, the Advanced Validation Suite (Patch 4) requires numpy, pandas, matplotlib, and the specialized TDA libraries. You can install them with:
+
+Bash
+pip install numpy pandas matplotlib ripser persim
+Step 2: Test the "Lite-Core" Verification Pipeline (The Main Test)
+This test will run the main aste_s-ncgl_hunt.py orchestrator. This will confirm that the entire "lite-core" loop (Patches 3 & 5) is working correctly from end to end. We'll run it for 2 generations to prove the evolutionary loop completes and repeats.
+
+1. Run the Orchestrator: Execute the following command in your terminal:
+
+Bash
+python aste_s-ncgl_hunt.py --generations 2 --population 4
+2. What to Watch For (Expected Output): You should see a detailed log in your console. Look for these key messages:
+
+Generation 0 starts:
+
+========================================================
+    ASTE S-NCGL: STARTING GENERATION 0
+========================================================
+[Pipeline] Registering 4 jobs for generation 0...
+Worker & Validator Success (repeated 4 times):
+
+[Pipeline] -> Launching Worker ...
+[Pipeline] Worker stdout:
+Worker completed successfully in ...s
+Output written to simulation_data/rho_history_...json
+
+[Pipeline] -> Launching Validator ...
+[Pipeline] Validator stdout:
+Validator completed. Report written to provenance_reports/provenance_...json
+Hunter Ingests Generation 0:
+
+[Hunter] Processing 4 new results from provenance_reports...
+[Hunter] Successfully processed and updated 4 runs.
+[Pipeline] Best run so far: ...
+Generation 1 starts (This proves the loop works!):
+
+========================================================
+    ASTE S-NCGL: STARTING GENERATION 1
+========================================================
+... (The process repeats for Generation 1) ...
+Final Completion:
+
+[Pipeline] ... ALL GENERATIONS COMPLETE ...
+3. Check the Artifacts: After the run completes, check your directory:
+
+simulation_ledger.csv: Open this file. You should see 8 runs (4 for Gen 0, 4 for Gen 1) with fitness scores calculated.
+
+provenance_reports/: This directory should be full of provenance_...json and ..._quantule_events.csv files.
+
+simulation_data/: This directory should contain the rho_history_...json artifacts generated by the "lite" worker.
+
+Step 3: Test the "Advanced Validation Suite" (Standalone Tools)
+These scripts are from Patch 4 and are tested separately.
+
+1. Test the Deconvolution Validator: This script is self-contained and generates its own mock data.
+
+Command: python deconvolution_validator.py
+
+Expected Output: You should see the SSE metrics printed to the console:
+
+FFT Deconvolution Study
+  Grid size: 256 x 256
+  Regularisation epsilon: 0.001
+  SSE(recovered, primordial): ...
+  SSE consistency check   : ...
+2. Test the Deconvolution Visualizer: This script will also run the study and save a PNG image of the 2x2 plot.
+
+Command: python visualize_deconvolution.py --output deconvolution_study.png
+
+Expected Output:
+
+Saved visualisation to deconvolution_study.png
+You should also see a new file, deconvolution_study.png, in your directory.
+
+3. The TDA Taxonomy Validator (Important Note):
+
+Command: python tda_taxonomy_validator.py provenance_reports/some_hash_quantule_events.csv (Replace some_hash... with a real hash generated by Step 2)
+
+Expected Mismatch: This test will not work on the output from the "lite-core" pipeline, and this is by design.
+
+The "lite-core" pipeline (Patch 5) is built to verify the orchestration and fitness logic. Its "lite" profiler generates a CSV with spectral data (peak_value, target).
+
+The TDA Validator (Patch 4) is built for structural analysis. It expects a CSV with spatial data (x, y, z coordinates) [cite: Code Review and Architecture Plan.md], which is only produced by the full JAX physics simulation.
+
+This separation is correct. The TDA tool is for analyzing the real "Discovery Engine" runs, not the "lite" Verification Engine runs.

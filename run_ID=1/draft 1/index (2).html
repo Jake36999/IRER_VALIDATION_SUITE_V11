@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> [cite: 672]
+    <title>IRER V11.0 | Dynamic Control Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        /* Simple loading spinner */
+        .spinner {
+            border-top-color: #3498db; [cite: 673]
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); } [cite: 674]
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans p-4 md:p-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold text-cyan-400">IRER V11.0 Control Hub</h1>
+        <p class="text-gray-400 mb-6">"HPC-SDG" Core | Dynamic Analysis Layer</p> [cite: 675]
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            <div class="lg:col-span-1 flex flex-col gap-6">
+                
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg"> [cite: 676]
+                    <h2 class="text-xl font-semibold mb-4">Layer 1: HPC Core Control</h2>
+                    <form id="hunt-form">
+                        <div class="mb-4">
+                             <label for="generations" class="block text-sm font-medium text-gray-400">Generations</label> [cite: 677]
+                            <input type="number" id="generations" name="generations" placeholder="Default: 10 (from settings.py)"
+                                   class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm p-2">
+                        </div>
+                        <div class="mb-4">
+                            <label for="population" class="block text-sm font-medium text-gray-400">Population Size</label>
+                             <input type="number" id="population" name="population" placeholder="Default: 10 (from settings.py)"
+                                   class="mt-1 block w-full bg-gray-700 border-gray-600 text-white rounded-md shadow-sm p-2">
+                        </div>
+                         <button type="submit" id="start-hunt-btn"
+                                class="w-full flex justify-center items-center bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50">
+                            <span id="btn-text">Start New Hunt</span>
+                             <div id="btn-spinner" class="spinner w-5 h-5 border-4 border-t-cyan-600 border-gray-200 rounded-full ml-3 hidden"></div>
+                        </button>
+                    </form>
+                </div>
+
+                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg"> [cite: 682]
+                    <h2 class="text-xl font-semibold mb-4">Live Hunt Status</h2>
+                    <div id="hunt-status" class="text-lg font-medium text-gray-300">Idle</div>
+                    <div class="mt-4 bg-gray-700 p-4 rounded-lg">
+                         <h3 class="text-sm font-medium text-gray-400">LAST EVENT</h3> [cite: 683]
+                        <p id="status-event" class="text-xl font-bold text-white truncate">-</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="lg:col-span-2 flex flex-col gap-6"> [cite: 684]
+
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl font-semibold mb-4">Layer 2: Live Analysis Dashboard</h2> [cite: 685]
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-sm font-medium text-gray-400">LAST SSE (FIDELITY)</h3>
+                             <p id="status-sse" class="text-2xl font-bold text-emerald-400">-</loc>
+                        </div>
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                             <h3 class="text-sm font-medium text-gray-400">LAST H-NORM (STABILITY)</h3> [cite: 687]
+                            <p id="status-h-norm" class="text-2xl font-bold text-amber-400">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg"> [cite: 688]
+                    <h2 class="text-xl font-semibold mb-4">Final Best Run (JSON)</h2>
+                    <pre id="provenance-box" class="w-full bg-gray-900 text-sm text-emerald-300 p-4 rounded-md overflow-x-auto h-48">{ "status": "Waiting for hunt to complete..." }</pre>
+                 </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Get All DOM Elements ---
+        const huntForm = document.getElementById('hunt-form');
+        const startBtn = document.getElementById('start-hunt-btn');
+        const btnText = document.getElementById('btn-text');
+        const btnSpinner = document.getElementById('btn-spinner');
+
+        const huntStatus = document.getElementById('hunt-status');
+        const statusEvent = document.getElementById('status-event');
+        const statusSse = document.getElementById('status-sse');
+        const statusHNorm = document.getElementById('status-h-norm');
+        const provenanceBox = document.getElementById('provenance-box');
+
+        let isPolling = false;
+        let pollInterval;
+        // --- Layer 1 Control Logic ---
+        huntForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const payload = {
+                num_generations: Number(document.getElementById('generations').value) || null,
+                population_size: Number(document.getElementById('population').value) || null,
+            };
+
+            setButtonLoading(true, 'Starting...');
+
+            try {
+                const response = await fetch('/api/start-hunt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify(payload),
+                });
+
+                if (response.status === 202) {
+                    huntStatus.textContent = 'Hunt Started. Polling for status...';
+                     setButtonLoading(true, 'Hunt Running...');
+                    startPolling();
+                } else if (response.status === 409) {
+                    const data = await response.json();
+                    huntStatus.textContent = data.message;
+                    setButtonLoading(true, 'Hunt Running...'); // Already running
+                    startPolling();
+                } else {
+                    const data = await response.json();
+                    huntStatus.textContent = data.message || 'Error starting hunt.';
+                    setButtonLoading(false);
+                }
+            } catch (error) {
+                huntStatus.textContent = 'Error: Could not connect to server.';
+                setButtonLoading(false);
+            }
+        });
+        // --- Layer 2 Visualization Logic ---
+        function setButtonLoading(isLoading, text = 'Start New Hunt') {
+            startBtn.disabled = isLoading;
+            btnText.textContent = text;
+            if (isLoading) {
+                btnSpinner.classList.remove('hidden');
+            } else {
+                btnSpinner.classList.add('hidden');
+            }
+        }
+
+        function startPolling() {
+            if (isPolling) return;
+            isPolling = true;
+            pollInterval = setInterval(updateStatus, 3000); // Poll every 3 seconds
+            updateStatus();
+        }
+
+        function stopPolling() {
+            if (!isPolling) return;
+            isPolling = false;
+            clearInterval(pollInterval);
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/get-status');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                // Update status text
+                huntStatus.textContent = data.hunt_status || 'Idle';
+                statusEvent.textContent = data.last_event || '-';
+                statusSse.textContent = data.last_sse || '-';
+                statusHNorm.textContent = data.last_h_norm || '-';
+                // Update final result box
+                if (data.final_result && Object.keys(data.final_result).length > 0) {
+                    provenanceBox.textContent = JSON.stringify(data.final_result, null, 2);
+                } else {
+                    provenanceBox.textContent = `{ "status": "${data.hunt_status}" }`;
+                }
+
+                // Stop polling if hunt is done or errored
+                if (data.hunt_status === 'Completed' || data.hunt_status.startsWith('Error')) {
+                    stopPolling();
+                    setButtonLoading(false, 'Start New Hunt');
+                } else if (data.hunt_status === 'Running') {
+                    setButtonLoading(true, 'Hunt Running...');
+                } else {
+                    // Idle state
+                    stopPolling();
+                    setButtonLoading(false, 'Start New Hunt');
+                }
+
+            } catch (error) {
+                huntStatus.textContent = 'Offline';
+                statusEvent.textContent = 'Error connecting to server.';
+                stopPolling();
+                setButtonLoading(false, 'Start New Hunt');
+            }
+        }
+
+        // Initial call on page load to check status
+        updateStatus();
+    </script>
+</body>
+</html>

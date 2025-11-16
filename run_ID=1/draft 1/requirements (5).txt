@@ -1,0 +1,7 @@
+# Core server
+flask
+# File system watcher
+watchdog
+# HDF5 support
+h5py
+# numpy, etc. are dependencies
