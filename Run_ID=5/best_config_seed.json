@@ -1,0 +1,15 @@
+{
+  "run_parameters": {
+    "fmia_params": {
+      "param_kappa": 0.0055,
+      "param_sigma_k": 0.52,
+      "param_alpha": 0.1,
+      "param_c_diffusion": 0.1,
+      "param_c_nonlinear": 1.0
+    }
+  },
+  "metadata": {
+    "description": "Seed parameters from the certified SSE=0.0179 run.",
+    "source_run_id": "certified_run_01"
+  }
+}

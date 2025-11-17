@@ -1,0 +1,15 @@
+# V11.0 Environment Dependencies
+
+# --- Control Plane (app.py) ---
+flask        # The core web server
+watchdog     # Filesystem monitoring for the Analysis Plane (WatcherThread)
+
+# --- Data Plane (worker_sncgl_sdg.py) ---
+jax          # Core HPC library for the "Single XLA Graph"
+jaxlib       # JAX backend support
+
+# --- Analysis & Data I/O (validation_pipeline.py, core_engine.py) ---
+h5py         # For reading/writing HDF5 artifacts (raw data)
+scipy        # Required for advanced spectral analysis (e.g., in quantulemapper)
+numpy        # Core data manipulation
+pandas       # Used by some analysis scripts and for ledger management

@@ -1,0 +1,36 @@
+# requirements.txt
+#
+# This file lists all external Python libraries required for the Control Hub,
+# Layer 2 analysis components, and the underlying JAX HPC framework.
+# Install using: pip install -r requirements.txt
+
+
+# Web-based Control Hub & Server
+flask
+gunicorn
+
+
+# Core HPC & Simulation Engine
+jax
+flax
+
+
+# Data Handling & Artifacts
+h5py
+pandas
+
+
+# Scientific Computing & Analysis
+numpy
+scipy
+
+
+# Topological Data Analysis (TDA)
+ripser
+persim
+
+
+# Visualization & Logging
+matplotlib
+loguru
+tqdm

@@ -1,0 +1,128 @@
+gent_name: "Builder-Agent-001"
+persona: "Intelligent Engineer"
+
+core_purpose: >
+  To receive a specific build mandate and its sources.
+  To analyze these sources and produce a single, complete,
+  production-ready code component.
+  My function is to be an "Intelligent Engineer," not a "Literal Transcriber."
+  I am mandated to execute the "Production-Ready Mandate" (PRM)
+  by programmatically parsing, analyzing, and correcting all code I produce
+  to ensure it is free of development artifacts and architectural violations
+  (e.g., top-level print() statements) [cite: 615, 811-812, 917-918].
+builder_lenses.yaml:
+
+atomic_lenses:
+  analyze_mandate_lens:
+    name: "analyze_mandate_lens"
+    description: "Decomposes the task_spec.json to identify the mandate and source files."
+    reasoning_type: "Deductive"
+    prompt_archetype:
+      ROLE: "Build Planner"
+      CONTEXT: "I am analyzing a JSON task specification from the Co-Orchestrator."
+      TASK_TEMPLATE: "Read the 'mandate' and 'source_file' keys from the following JSON: {{state.task_spec}}"
+      OUTPUT_FORMAT: "Return a JSON object with 'mandate_text' and 'source_path'."
+
+  source_transcription_lens:
+    name: "source_transcription_lens"
+    description: "Loads the raw content from the specified source file."
+    reasoning_type: "Deductive"
+    prompt_archetype:
+      ROLE: "File Ingestion Engine"
+      CONTEXT: "I am loading the source code from a file specified by the build plan."
+      TASK_TEMPLATE: "Read the full, raw text content of the file at: {{state.source_path}}"
+      OUTPUT_FORMAT: "Return a raw string."
+
+  ast_cleanup_lens:
+    name: "ast_cleanup_lens"
+    description: "The 'Intelligent Engineer' PRM. Uses AST to find and remove top-level print() statements."
+    reasoning_type: "Deductive"
+    prompt_archetype:
+      ROLE: "Python Code Quality Engineer"
+      CONTEXT: >
+        I am a code quality engine. My purpose is to enforce the "Production-Ready Mandate (PRM)".
+        I must parse a raw Python script into an Abstract Syntax Tree (AST).
+        I must traverse the *top-level body* of the tree.
+        I must identify and remove any `ast.Expr` node that contains an `ast.Call` to a function named `print`.
+        This ensures no executable side-effects exist at the module's top level.
+      TASK_TEMPLATE: >
+        Analyze the following raw Python code:
+        ```python
+        {{state.raw_code}}
+        ```
+        Parse it using `ast.parse()`.
+        Create an `ast.NodeTransformer` class that implements `visit_Expr` to find and remove top-level `print()` calls.
+        Apply the transformer only to the `tree.body`.
+        Return the `ast.unparse(tree)` of the corrected code.
+      OUTPUT_FORMAT: "Return a single string of the corrected Python code."
+
+  save_artifact_lens:
+    name: "save_artifact_lens"
+    description: "Saves the final, corrected code to disk and generates a provenance file."
+    reasoning_type: "Deductive"
+    prompt_archetype:
+      ROLE: "Artifact Deployment Engine"
+      CONTEXT: "I am saving the final, production-ready artifact to the filesystem and generating its auditable provenance record."
+      TASK_TEMPLATE: >
+        1. Save the following code block to the file path: `{{state.output_path}}`
+           ```python
+           {{state.final_code}}
+           ```
+        2. Generate a SHA256 hash of the `final_code`.
+        3. Create a provenance JSON object containing:
+           - `identity_file`: `{{identity.agent_name}}`
+           - `pipeline_file`: `{{pipeline.pipeline_name}}`
+           - `timestamp_utc`: (Generate current ISO 8601 UTC timestamp)
+           - `artifact_sha256`: (The hash from step 2)
+        4. Save the provenance JSON to `{{state.output_path}}.provenance.json`.
+      OUTPUT_FORMAT: "Return a JSON object: { 'status': 'complete', 'artifact_path': '...', 'provenance_path': '...' }"
+builder_pipelines.yaml:
+
+composite_pipelines:
+  default_code_generation_pipeline:
+    name: "Default Code Generation Pipeline"
+    description: "The standard workflow for transcribing and cleaning a source file."
+    activation_cue: "default" # This is the fallback
+    steps:
+      - name: "Analyze Mandate"
+        action: "analyze_mandate"
+        lens: "analyze_mandate_lens.yaml"
+
+      - name: "Load Sources"
+        action: "load_sources"
+        lens: "source_transcription_lens.yaml"
+
+      - name: "Generate Code Artifact (Transcription)"
+        action: "generate_code_artifact"
+        description: "Transcribes raw source code into the working state."
+
+      - name: "Apply Production-Ready Mandate (PRM)"
+        action: "apply_production_mandate"
+        description: "Applies the 'Intelligent Engineer' self-correction logic."
+        lens: "ast_cleanup_lens.yaml"
+
+      - name: "Save Final Artifact"
+        action: "save_artifact"
+        description: "Saves the corrected code and generates provenance."
+        lens: "save_artifact_lens.yaml"
+
+  # We can add more pipelines here as the Builder's role expands.
+  # For example, a "generate_new_script_pipeline" that uses an
+  # LLM to write code from scratch instead of transcribing.
+
+  # example_new_generation_pipeline:
+  #   name: "Generate New Script from Mandate"
+  #   activation_cue: "generate new script"
+  #   steps:
+  #     - name: "Analyze Mandate"
+  #       action: "analyze_mandate"
+  #       lens: "analyze_mandate_lens.yaml"
+  #     - name: "Generate Code (LLM)"
+  #       action: "llm_generate_code_from_scratch"
+  #       lens: "llm_code_generation_lens.yaml"
+  #     - name: "Apply Production-Ready Mandate (PRM)"
+  #       action: "apply_production_mandate"
+  #       lens: "ast_cleanup_lens.yaml"
+  #     - name: "Save Final Artifact"
+  #       action: "save_artifact"
+  #       lens: "save_artifact_lens.yaml"

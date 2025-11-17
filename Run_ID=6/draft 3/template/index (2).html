@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRER V11.0 Control Hub</title>
+    <style>
+        body { font-family: sans-serif; background-color: #1a202c; color: #e2e8f0; margin: 0; padding: 2rem; }
+        .container { max-width: 800px; margin: auto; background-color: #2d3748; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #63b3ed; border-bottom: 2px solid #4a5568; padding-bottom: 0.5rem; }
+        h2 { color: #90cdf4; margin-top: 2rem; }
+        button { background-color: #4299e1; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 5px; cursor: pointer; font-size: 1rem; transition: background-color 0.2s; margin-right: 0.5rem; }
+        button:disabled { background-color: #4a5568; cursor: not-allowed; }
+        .status-box { background-color: #4a5568; padding: 1rem; border-radius: 5px; margin-top: 1rem; }
+        #live-status { font-weight: bold; }
+        .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+        .metric-card { background-color: #1a202c; padding: 1rem; border-radius: 5px; }
+        .metric-title { font-size: 0.9rem; color: #a0aec0; }
+        .metric-value { font-size: 1.2rem; font-family: monospace; color: #63b3ed; word-break: break-all;}
+        .log-display { background-color: #1a202c; padding: 1rem; border-radius: 5px; margin-top: 1rem; font-family: monospace; font-size: 0.8em; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+        .controls { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IRER V11.0 "HPC-SDG" Control Hub</h1>
+
+        <h2>Control Panel</h2>
+        <div class="controls">
+            <button id="start-hunt-btn">Start New Hunt</button>
+            <button id="download-full-log-btn">Download Full Log</button>
+            <button id="download-all-rho-data-btn">Download All Rho Data</button>
+        </div>
+
+        <div class="status-box">
+            <strong>Live Status:</strong> <span id="live-status">Idle</span>
+            <p id="last-event" style="font-size: 0.9em; color: #a0aec0; margin-top: 0.5em;">Awaiting commands...</p>
+        </div>
+
+        <h2>Last Processed Job</h2>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-title">Job ID</div>
+                <div class="metric-value" id="last-job-id">--</div>
+                <div class="controls" style="margin-top: 0.5rem;">
+                    <button id="view-log-btn" disabled>View Log</button>
+                    <button id="download-provenance-btn" disabled>Download Provenance</button>
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Log-Prime SSE</div>
+                <div class="metric-value" id="last-sse">--</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">SDG H-Norm L2</div>
+                <div class="metric-value" id="last-h-norm">--</div>
+            </div>
+        </div>
+
+        <h2 style="margin-top: 2rem;">Job Log</h2>
+        <pre id="job-log-display" class="log-display">Select a job to view its log.</pre>
+
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('start-hunt-btn');
+        const downloadFullLogBtn = document.getElementById('download-full-log-btn');
+        const downloadAllRhoDataBtn = document.getElementById('download-all-rho-data-btn');
+        const viewLogBtn = document.getElementById('view-log-btn');
+        const downloadProvenanceBtn = document.getElementById('download-provenance-btn');
+
+        const liveStatusEl = document.getElementById('live-status');
+        const lastEventEl = document.getElementById('last-event');
+        const lastJobIdEl = document.getElementById('last-job-id');
+        const lastSseEl = document.getElementById('last-sse');
+        const lastHNormEl = document.getElementById('last-h-norm');
+        const jobLogDisplay = document.getElementById('job-log-display');
+
+        let currentJobId = null;
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/get-status');
+                const data = await response.json();
+
+                liveStatusEl.textContent = data.status || 'Unknown';
+                lastEventEl.textContent = data.last_event || 'No recent events.';
+
+                if (data.status === 'Running') {
+                    startBtn.disabled = true;
+                } else {
+                    startBtn.disabled = false;
+                }
+
+                if (data.last_job_id) {
+                    currentJobId = data.last_job_id;
+                    lastJobIdEl.textContent = currentJobId.substring(0, 12);
+                    lastSseEl.textContent = parseFloat(data.last_sse).toFixed(6) || 'N/A';
+                    lastHNormEl.textContent = parseFloat(data.last_h_norm).toFixed(6) || 'N/A';
+                    viewLogBtn.disabled = false;
+                    downloadProvenanceBtn.disabled = false;
+                } else {
+                    currentJobId = null;
+                    lastJobIdEl.textContent = '--';
+                    lastSseEl.textContent = '--';
+                    lastHNormEl.textContent = '--';
+                    viewLogBtn.disabled = true;
+                    downloadProvenanceBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error("Polling failed:", error);
+                liveStatusEl.textContent = 'Connection Error';
+                lastEventEl.textContent = 'Could not connect to the server.';
+                startBtn.disabled = true;
+            }
+        }
+
+        async function fetchAndDisplayRunLog(jobId) {
+            if (!jobId) return;
+            jobLogDisplay.textContent = `Fetching log for ${jobId}...`;
+            try {
+                const response = await fetch(`/api/get-run-log/${jobId}`);
+                const data = await response.json();
+                if (response.ok) {
+                    jobLogDisplay.textContent = data.log_content;
+                } else {
+                    jobLogDisplay.textContent = `Error fetching log: ${data.message}`;
+                }
+            } catch (error) {
+                jobLogDisplay.textContent = `Error connecting to log API: ${error}`;
+            }
+        }
+
+        function downloadProvenance(jobId) {
+            if (!jobId) return;
+            window.open(`/api/download-provenance/${jobId}`, '_blank');
+        }
+
+        function downloadFullLog() {
+            window.open('/api/get-full-log', '_blank');
+        }
+
+        function downloadAllRhoData() {
+            window.open('/api/download-all-rho-data', '_blank');
+        }
+
+        // Event Listeners
+        startBtn.addEventListener('click', async () => {
+            startBtn.disabled = true;
+            liveStatusEl.textContent = 'Starting...';
+            jobLogDisplay.textContent = 'Waiting for first job log...';
+            try {
+                const response = await fetch('/api/start-hunt', { method: 'POST' });
+                if (response.ok) {
+                    lastEventEl.textContent = 'Hunt initiated successfully.';
+                    setTimeout(updateStatus, 1000); // Poll soon after starting
+                } else {
+                    const data = await response.json();
+                    lastEventEl.textContent = data.message || 'Error starting hunt.';
+                    startBtn.disabled = false;
+                }
+            } catch (error) {
+                lastEventEl.textContent = 'Error: Could not connect to the server.';
+                startBtn.disabled = false;
+            }
+        });
+
+        viewLogBtn.addEventListener('click', () => fetchAndDisplayRunLog(currentJobId));
+        downloadProvenanceBtn.addEventListener('click', () => downloadProvenance(currentJobId));
+        downloadFullLogBtn.addEventListener('click', downloadFullLog);
+        downloadAllRhoDataBtn.addEventListener('click', downloadAllRhoData);
+
+        // Poll for status every 3 seconds
+        setInterval(updateStatus, 3000);
+        // Initial status load
+        document.addEventListener('DOMContentLoaded', updateStatus);
+    </script>
+</body>
+</html>

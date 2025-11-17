@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IRER V11.0 | Dynamic Control Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold text-cyan-400">IRER V11.0 Control Hub</h1>
+        <p class="text-gray-400 mb-6">"HPC-SDG" Core | Dynamic Analysis Layer</p>
+
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
+            <h2 class="text-xl font-semibold mb-4 text-white border-b border-gray-700 pb-2">Control Panel</h2>
+            <button id="btn-start-hunt" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:bg-gray-500 disabled:cursor-not-allowed">
+                Start New Hunt
+            </button>
+        </div>
+
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold mb-2 text-white">Live Status</h2>
+            <div id="status-banner" class="p-3 mb-4 rounded-md text-center font-mono bg-gray-700 text-yellow-300">Idle</div>
+
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <h3 class="font-semibold text-lg mb-2 text-cyan-400">Discovered Artifacts</h3>
+                    <ul id="artifact-list" class="list-disc list-inside bg-gray-900 p-3 rounded h-48 overflow-y-auto font-mono text-sm">
+                        <li>-</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 class="font-semibold text-lg mb-2 text-cyan-400">Final Result</h3>
+                    <pre id="final-result-box" class="bg-gray-900 p-3 rounded h-48 overflow-y-auto text-sm"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        const btnStartHunt = document.getElementById('btn-start-hunt');
+        const statusBanner = document.getElementById('status-banner');
+        const artifactList = document.getElementById('artifact-list');
+        const finalResultBox = document.getElementById('final-result-box');
+
+
+        let isPolling = false;
+        let pollInterval;
+
+
+        async function startHunt() {
+            btnStartHunt.disabled = true;
+            statusBanner.textContent = "Starting Hunt...";
+            statusBanner.classList.replace('text-yellow-300', 'text-blue-300');
+            
+            try {
+                const response = await fetch('/api/start-hunt', { method: 'POST' });
+                const data = await response.json();
+                if (response.ok) {
+                    if (!isPolling) {
+                        isPolling = true;
+                        pollInterval = setInterval(pollStatus, 3000); // Poll every 3 seconds
+                    }
+                } else {
+                    statusBanner.textContent = `Error: ${data.message}`;
+                    btnStartHunt.disabled = false;
+                }
+            } catch (error) {
+                statusBanner.textContent = 'Error: Could not connect to server.';
+                btnStartHunt.disabled = false;
+            }
+        }
+        
+        async function pollStatus() {
+            try {
+                const response = await fetch('/api/get-status');
+                const data = await response.json();
+                
+                statusBanner.textContent = data.hunt_status || 'Unknown';
+                
+                // Update artifacts list
+                artifactList.innerHTML = '';
+                if (data.found_files && data.found_files.length > 0) {
+                    data.found_files.forEach(file => {
+                        const li = document.createElement('li');
+                        li.textContent = file;
+                        artifactList.appendChild(li);
+                    });
+                } else {
+                    artifactList.innerHTML = '<li>-</li>';
+                }
+
+
+                // Update final result
+                finalResultBox.textContent = JSON.stringify(data.final_result || {}, null, 2);
+
+
+                if (data.hunt_status === 'Completed' || data.hunt_status.startsWith('Error')) {
+                    btnStartHunt.disabled = false;
+                    clearInterval(pollInterval);
+                    isPolling = false;
+                } else {
+                    btnStartHunt.disabled = true;
+                }
+
+
+            } catch (error) {
+                console.error("Polling failed:", error);
+            }
+        }
+
+
+        btnStartHunt.addEventListener('click', startHunt);
+        // Initial poll on page load
+        pollStatus();
+    </script>
+</body>
+</html>

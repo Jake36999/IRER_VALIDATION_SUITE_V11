@@ -1,0 +1,26 @@
+# This file lists all external Python libraries required for the Control Hub,
+# Layer 2 analysis components, and the underlying JAX HPC framework.
+# Install using: pip install -r requirements.txt
+
+# Web-based Control Hub & Server
+flask
+watchdog
+pyngrok # For Colab tunneling
+
+# Core HPC & Simulation Engine
+jax[cpu] # Specify CPU for Colab by default, can be jax[cuda] for GPU
+
+# Data Handling & Artifacts
+h5py
+pandas
+
+# Scientific Computing & Analysis
+numpy
+scipy
+
+# For future TDA (Layer 2) - stubbed but good to have dependencies listed
+ripser
+persim
+
+# Visualization & Logging
+matplotlib
